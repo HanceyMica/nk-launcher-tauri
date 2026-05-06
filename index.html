@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>nk-launcher</title>
+  <link rel="stylesheet" href="/src/styles/main.css" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: transparent; overflow: hidden; }
+  </style>
+</head>
+<body>
+  <div id="container">
+    <div id="search-wrapper">
+      <div id="drag-handle" data-tauri-drag-region><i class="fa-solid fa-grip-vertical"></i></div>
+      <input id="search-input" type="text" placeholder="输入搜索..." autocomplete="off" spellcheck="false" />
+    </div>
+    <div id="result-list"></div>
+  </div>
+  <div id="config-window">
+    <div class="config-titlebar" data-tauri-drag-region>
+      <div class="titlebar-left">
+        <img src="/src-tauri/icons/32x32.png" class="titlebar-icon" />
+        <span class="titlebar-title">设置</span>
+      </div>
+      <div class="titlebar-center">
+        <input type="text" class="titlebar-search" placeholder="" />
+      </div>
+      <div class="titlebar-right">
+        <div class="titlebar-btn" id="btn-minimize"><i class="fa-solid fa-minus"></i></div>
+        <div class="titlebar-btn" id="btn-maximize"><i class="fa-regular fa-square"></i></div>
+        <div class="titlebar-btn" id="btn-close"><i class="fa-solid fa-xmark"></i></div>
+      </div>
+    </div>
+    <div class="config-body">
+      <div class="sidebar">
+        <div class="sidebar-item active" data-target="basic-settings">基础设置</div>
+        <div class="sidebar-item" data-target="simple-settings">简单模式设置</div>
+        <div class="sidebar-item" data-target="expert-settings">专家模式设置</div>
+        <div class="sidebar-item" data-target="appearance-settings">外观设置</div>
+        <div class="sidebar-item" data-target="about-settings">关于</div>
+        <div class="sidebar-footer">
+          <p>Version : 0.1.0</p>
+          <p>Build: 202605052345-010</p>
+        </div>
+      </div>
+      <div class="main-content">
+        <!-- 基础设置 -->
+        <div id="basic-settings" class="content-panel active">
+          <div class="settings-content-body">
+            <div class="setting-item">
+              <span class="setting-label">模式</span>
+              <fluent-select id="mode-select">
+                <fluent-option value="expert">专家模式</fluent-option>
+                <fluent-option value="simple">简单模式</fluent-option>
+              </fluent-select>
+            </div>
+            <div class="setting-item">
+              <span class="setting-label">语言</span>
+              <fluent-select id="lang-select">
+                <fluent-option value="zh">中文</fluent-option>
+                <fluent-option value="en">English</fluent-option>
+                <fluent-option value="ja">日本語</fluent-option>
+              </fluent-select>
+            </div>
+            <div class="setting-item">
+              <span class="setting-label">默认浏览器</span>
+              <fluent-select id="browser-select"></fluent-select>
+            </div>
+            <div class="setting-item">
+              <span class="setting-label">快捷键</span>
+              <fluent-text-field id="hotkey-input" placeholder="Alt+Space" readonly></fluent-text-field>
+            </div>
+            <div class="setting-item">
+              <span class="setting-label">配置管理</span>
+              <div>
+                <fluent-button id="btn-export-config">导出配置</fluent-button>
+                <fluent-button id="btn-import-config">导入配置</fluent-button>
+                <input type="file" id="config-import-input" accept=".json" style="display: none;" />
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 简单模式设置 -->
+        <div id="simple-settings" class="content-panel">
+          <div class="settings-content-body">
+            <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 16px;">
+              <span style="font-size: 16px; font-weight: 600;">需要配置的网格：</span>
+              <fluent-select id="simple-grid-level-select" style="min-width: 150px;">
+                <fluent-option value="main">主网格</fluent-option>
+              </fluent-select>
+            </div>
+            <div id="simple-settings-grid" class="settings-nine-grid">
+              <!-- 1-9 Grid Items will be injected here -->
+            </div>
+            
+            <div id="simple-entry-form" class="entry-form-container" style="margin-top: 16px;">
+              <h3 id="simple-entry-form-title">编辑格子</h3>
+              <fluent-text-field id="simple-cmd" type="hidden" style="display:none;"></fluent-text-field>
+              <fluent-text-field id="simple-title" placeholder="显示名称"></fluent-text-field>
+              <fluent-select id="simple-kind">
+                <fluent-option value="website">网站</fluent-option>
+                <fluent-option value="app">本地应用</fluent-option>
+                <fluent-option value="subgrid">子网格</fluent-option>
+              </fluent-select>
+              <fluent-text-field id="simple-url" placeholder="URL (网站填写)"></fluent-text-field>
+              <fluent-text-field id="simple-path" placeholder="路径 (应用填写)"></fluent-text-field>
+              <div style="display: flex; gap: 8px; justify-content: flex-end; margin-top: 8px;">
+                <fluent-button id="btn-save-simple" appearance="accent">保存</fluent-button>
+                <fluent-button id="btn-delete-simple" style="color: var(--error-color);">删除</fluent-button>
+                <fluent-button id="btn-cancel-simple">取消</fluent-button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 专家模式设置 -->
+        <div id="expert-settings" class="content-panel">
+          <div class="settings-content-body">
+            <div style="display: flex; gap: 8px; margin-bottom: 12px;">
+              <fluent-button id="btn-refresh-expert">刷新</fluent-button>
+              <fluent-button id="btn-add-expert" appearance="accent">新增条目</fluent-button>
+            </div>
+            <div id="expert-entries-list" class="entry-list"></div>
+            <div id="expert-entry-form" class="entry-form-container">
+              <h3>新增/编辑专家模式条目</h3>
+              <fluent-text-field id="expert-cmd" placeholder="触发关键字"></fluent-text-field>
+              <fluent-text-field id="expert-title" placeholder="显示名称"></fluent-text-field>
+              <fluent-select id="expert-kind">
+                <fluent-option value="website">网站</fluent-option>
+                <fluent-option value="app">本地应用</fluent-option>
+              </fluent-select>
+              <fluent-text-field id="expert-url" placeholder="URL (网站填写)"></fluent-text-field>
+              <fluent-text-field id="expert-path" placeholder="路径 (应用填写)"></fluent-text-field>
+              <div style="display: flex; gap: 8px; justify-content: flex-end; margin-top: 8px;">
+                <fluent-button id="btn-save-expert" appearance="accent">保存</fluent-button>
+                <fluent-button id="btn-cancel-expert">取消</fluent-button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 外观设置 -->
+        <div id="appearance-settings" class="content-panel">
+          <div class="settings-content-body">
+            <div class="setting-item">
+              <span class="setting-label">主题</span>
+              <fluent-select id="theme-select">
+                <fluent-option value="system">跟随系统</fluent-option>
+                <fluent-option value="light">明亮</fluent-option>
+                <fluent-option value="dark">暗黑</fluent-option>
+              </fluent-select>
+            </div>
+            <div class="setting-item">
+              <span class="setting-label">背景图片</span>
+              <div>
+                <fluent-button id="btn-upload-bg">上传图片</fluent-button>
+                <fluent-button id="btn-clear-bg">清除背景</fluent-button>
+                <input type="file" id="bg-upload-input" accept="image/*" style="display: none;" />
+              </div>
+            </div>
+            <div class="setting-item">
+              <span class="setting-label">背景模糊度</span>
+              <input type="range" id="bg-blur-slider" min="0" max="50" value="20" class="setting-slider" />
+            </div>
+            <div class="setting-item">
+              <span class="setting-label">内容透明度</span>
+              <input type="range" id="bg-opacity-slider" min="0" max="100" value="60" class="setting-slider" />
+            </div>
+            <div class="setting-item">
+              <span class="setting-label">搜索框透明度</span>
+              <input type="range" id="search-opacity-slider" min="0" max="100" value="100" class="setting-slider" />
+            </div>
+            <div class="setting-item">
+              <span class="setting-label">搜索框长度</span>
+              <input type="range" id="search-width-slider" min="300" max="1000" value="600" step="10" class="setting-slider" />
+            </div>
+          </div>
+        </div>
+
+        <!-- 关于 -->
+        <div id="about-settings" class="content-panel">
+          <div class="about-body">
+            <h1>nk-launcher</h1>
+            <p>版本 0.1.0</p>
+            <p style="margin: 16px 0;">欢迎使用 nk-launcher</p>
+            <p style="margin-bottom: 20px;">按下 Alt+Space 唤醒主窗口</p>
+            <p>作者: HarveyMica</p>
+            <p><a href="https://github.com/HanceyMica" target="_blank">github.com/HanceyMica</a></p>
+            <p><a href="https://x.com/HanceyMica" target="_blank">x.com/HanceyMica</a></p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div id="toast"></div>
+  <script type="module" src="/src/index.ts"></script>
+</body>
+</html>
