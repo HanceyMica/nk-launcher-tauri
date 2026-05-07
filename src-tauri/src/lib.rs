@@ -289,18 +289,25 @@ fn setup_global_shortcut(app: &AppHandle, state: State<'_, AppState>) {
         );
         let fallback = Shortcut::new(Some(Modifiers::ALT), Code::Space);
         let _ = register_hotkey_logic(&app.clone(), fallback.clone(), &current_hotkey);
+        // Don't add callback here - fallback path handles its own callback via on_shortcut in register_hotkey
+        // 不在此处添加 callback - fallback 路径通过 register_hotkey 中的 on_shortcut 处理
+        return;
     }
 
-    // Register callback for shortcut trigger / 注册快捷键触发回调
-    let _ = app
-        .global_shortcut()
-        .on_shortcut(new_shortcut, move |_app, _shortcut, event| {
-            // Only trigger on key release to avoid accidental activation
-            // 仅在按键释放时触发以避免意外激活
-            if event.state == ShortcutState::Released {
-                toggle_window_visibility(&handle);
-            }
-        });
+    // Register callback for shortcut trigger only if no previous hotkey was registered
+    // 仅在没有之前的快捷键时才添加 callback
+    // This prevents duplicate callbacks when register_hotkey is called later
+    // 这可以防止后续调用 register_hotkey 时重复添加 callback
+    {
+        let hotkey_state = state.current_hotkey.lock();
+        if hotkey_state.is_none() {
+            let _ = app.global_shortcut().on_shortcut(new_shortcut, move |_app, _shortcut, event| {
+                if event.state == ShortcutState::Released {
+                    toggle_window_visibility(&handle);
+                }
+            });
+        }
+    }
 }
 
 // ============================================================================
