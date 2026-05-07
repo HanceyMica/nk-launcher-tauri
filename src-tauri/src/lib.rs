@@ -296,7 +296,7 @@ fn setup_global_shortcut(app: &AppHandle, state: State<'_, AppState>) {
     if let Some(shortcut) = registered_shortcut {
         let cb_handle = handle.clone();
         let _ = app.global_shortcut().on_shortcut(shortcut, move |_app, _shortcut, event| {
-            if event.state == ShortcutState::Released {
+            if event.state == ShortcutState::Pressed {
                 toggle_window_visibility(&cb_handle);
             }
         });
@@ -771,7 +771,7 @@ async fn register_hotkey(
     let _ = app
         .global_shortcut()
         .on_shortcut(new_shortcut, move |_app, _shortcut, event| {
-            if event.state == ShortcutState::Released {
+            if event.state == ShortcutState::Pressed {
                 toggle_window_visibility(&handle);
             }
         });
