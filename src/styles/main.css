@@ -31,6 +31,7 @@
   --text-primary: #ffffff;
   --text-secondary: #a0a0a0;
   --border-color: rgba(255, 255, 255, 0.1);
+  color-scheme: dark;
 }
 
 body {
@@ -51,6 +52,8 @@ body {
   -webkit-backdrop-filter: blur(30px);
   display: flex;
   flex-direction: column;
+  width: 100vw;
+  height: 100vh;
 }
 
 #search-wrapper {
@@ -95,8 +98,11 @@ body {
 #result-list {
   border-top: 1px solid var(--border-color);
   background: transparent;
-  max-height: 360px;
+  flex: 1;
   overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
 }
 
 .result-item {
@@ -145,25 +151,29 @@ body {
 /* Simple Mode Grid */
 #nine-grid {
   display: grid;
-  grid-template-columns: repeat(3, 90px);
-  gap: 4px;
-  padding: 8px;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  padding: 16px;
   justify-content: center;
+  flex: 1;
+  align-content: stretch;
 }
 
 .grid-item {
   position: relative;
   display: flex;
-  flex-direction: row;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
   background: var(--bg-secondary);
-  border-radius: 4px;
-  width: 90px;
-  height: 40px;
+  color: var(--text-primary);
+  border-radius: 6px;
+  width: 100%;
+  height: 100%;
+  min-height: 50px;
   cursor: pointer;
   transition: background 0.1s;
-  gap: 4px;
+  gap: 8px;
 }
 
 .grid-item:hover {
@@ -172,22 +182,23 @@ body {
 
 .grid-item .number {
   position: absolute;
-  top: 0;
-  left: 2px;
-  font-size: 10px;
+  top: 4px;
+  left: 6px;
+  font-size: 12px;
   color: var(--text-secondary);
 }
 
 .grid-item .name {
-  font-size: 12px;
+  font-size: 14px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  max-width: 55px;
+  max-width: 90%;
+  text-align: center;
 }
 
 .grid-item .icon {
-  font-size: 14px;
+  font-size: 24px;
 }
 
 #simple-actions {
@@ -196,6 +207,7 @@ body {
   padding: 8px;
   justify-content: center;
   border-top: 1px solid var(--border-color);
+  margin-top: auto;
 }
 
 /* Settings Panel */
@@ -462,6 +474,7 @@ body {
   opacity: 0;
   transition: opacity 0.3s;
   pointer-events: none;
+  z-index: 1000;
 }
 
 #toast.visible {
@@ -554,6 +567,7 @@ body {
   gap: 8px;
   padding: 12px;
   background: var(--bg-primary);
+  color: var(--text-primary);
   border: 1px solid var(--border-color);
   border-radius: 8px;
   cursor: pointer;
@@ -601,15 +615,118 @@ body {
 .settings-grid-item-title {
   font-size: 14px;
   font-weight: 600;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  word-break: break-all;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
 }
 
 .settings-grid-item-desc {
   font-size: 12px;
   color: var(--text-secondary);
+  word-break: break-all;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+}
+
+#welcome-window {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: var(--bg-primary);
+  display: none;
+  flex-direction: column;
+  border-radius: 8px;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  z-index: 100;
+  backdrop-filter: blur(var(--bg-blur));
+}
+
+#welcome-window.visible {
+  display: flex;
+}
+
+.welcome-body {
+  padding: 20px 40px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: space-between;
+  height: calc(100% - 48px); /* 减去标题栏高度 */
+  text-align: center;
+  overflow-y: auto;
+}
+
+.welcome-slide {
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  width: 100%;
+  opacity: 0;
+}
+
+.welcome-slide.active {
+  display: flex;
+  animation: fadeInSlide 0.3s ease-out forwards;
+}
+
+@keyframes fadeInSlide {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.welcome-placeholder {
+  margin: 16px 0;
+  width: 100%;
+  max-width: 400px;
+  height: 140px;
+  background: rgba(0,0,0,0.1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  color: var(--text-secondary);
+  border: 2px dashed var(--border-color);
+  flex-shrink: 0;
+}
+
+.welcome-nav-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  margin-top: 12px;
+  padding-bottom: 12px;
+  flex-shrink: 0;
+}
+
+.welcome-dots {
+  display: flex;
+  gap: 8px;
+}
+
+.welcome-dots .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--border-color);
+  transition: background 0.2s;
+}
+
+.welcome-dots .dot.active {
+  background: var(--accent-color);
+}
+
+.welcome-nav {
+  display: flex;
+  gap: 16px;
 }

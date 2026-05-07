@@ -19,15 +19,15 @@ pub struct WindowsRegistry;
 impl RegistryProvider for WindowsRegistry {
     #[cfg(target_os = "windows")]
     fn enumerate_browsers(&self) -> Result<Vec<BrowserInfo>, AppError> {
+        use std::collections::HashSet;
         use winreg::enums::*;
         use winreg::RegKey;
-        use std::collections::HashSet;
 
         let mut browsers = Vec::new();
         let mut seen = HashSet::new();
 
         let hives = [HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE];
-        
+
         for hive in hives {
             let root = RegKey::predef(hive);
             if let Ok(startmenu) = root.open_subkey("Software\\Clients\\StartMenuInternet") {
@@ -37,9 +37,12 @@ impl RegistryProvider for WindowsRegistry {
                     }
 
                     if let Ok(key) = startmenu.open_subkey(&name) {
-                        let browser_name = key.get_value::<String, _>("").unwrap_or_else(|_| name.clone());
-                        
-                        let exe_path = key.open_subkey("shell\\open\\command")
+                        let browser_name = key
+                            .get_value::<String, _>("")
+                            .unwrap_or_else(|_| name.clone());
+
+                        let exe_path = key
+                            .open_subkey("shell\\open\\command")
                             .and_then(|cmd_key| cmd_key.get_value::<String, _>(""))
                             .map(|cmd| parse_command_to_exe(&cmd))
                             .ok();
@@ -109,7 +112,10 @@ pub fn resolve_browser_path(browser_id: Option<&str>) -> Result<Option<String>, 
 pub fn open_url_with_browser(url: &str, exe_path: &str) -> Result<(), AppError> {
     let exe = PathBuf::from(exe_path);
     if !exe.exists() {
-        return Err(AppError::Browser(format!("Browser not found: {}", exe_path)));
+        return Err(AppError::Browser(format!(
+            "Browser not found: {}",
+            exe_path
+        )));
     }
 
     let mut cmd = Command::new(&exe);
@@ -129,12 +135,13 @@ pub fn open_url_with_browser(url: &str, exe_path: &str) -> Result<(), AppError> 
 }
 
 #[cfg(test)]
-pub fn construct_browser_args(browser_id: &str, url: &str) -> Result<(String, Vec<String>), AppError> {
-    let browsers = enumerate_browsers()?;
-    let browser = browsers.iter().find(|b| b.id == browser_id);
-
+pub fn construct_browser_args(
+    browser: &BrowserInfo,
+    url: &str,
+) -> Result<(String, Vec<String>), AppError> {
     let exe_path = browser
-        .and_then(|b| b.exe_path.as_ref())
+        .exe_path
+        .as_ref()
         .ok_or_else(|| AppError::Browser("Browser not found".to_string()))?
         .clone();
 
@@ -153,7 +160,9 @@ mod tests {
                 BrowserInfo {
                     id: "chrome".to_string(),
                     name: "Google Chrome".to_string(),
-                    exe_path: Some("C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe".to_string()),
+                    exe_path: Some(
+                        "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe".to_string(),
+                    ),
                 },
                 BrowserInfo {
                     id: "firefox".to_string(),
@@ -167,7 +176,10 @@ mod tests {
     #[test]
     fn test_parse_command_to_exe() {
         let cmd1 = "\"C:\\Program Files\\Browser\\browser.exe\" --arg \"value\"";
-        assert_eq!(parse_command_to_exe(cmd1), "C:\\Program Files\\Browser\\browser.exe");
+        assert_eq!(
+            parse_command_to_exe(cmd1),
+            "C:\\Program Files\\Browser\\browser.exe"
+        );
 
         let cmd2 = "C:\\Browser\\chrome.exe https://example.com";
         assert_eq!(parse_command_to_exe(cmd2), "C:\\Browser\\chrome.exe");
@@ -179,20 +191,30 @@ mod tests {
         let browsers = provider.enumerate_browsers().unwrap();
         assert_eq!(browsers.len(), 2);
         assert_eq!(browsers[0].id, "chrome");
-        assert_eq!(browsers[0].exe_path.as_deref(), Some("C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"));
+        assert_eq!(
+            browsers[0].exe_path.as_deref(),
+            Some("C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe")
+        );
         assert_eq!(browsers[1].id, "firefox");
         assert!(browsers[1].exe_path.is_none());
     }
 
     #[test]
-    fn test_browser_enumeration() {
-        let browsers = enumerate_browsers();
-        assert!(browsers.is_ok());
-    }
+    fn test_construct_browser_args() {
+        let browser = BrowserInfo {
+            id: "chrome".to_string(),
+            name: "Chrome".to_string(),
+            exe_path: Some("C:\\chrome.exe".to_string()),
+        };
+        let (exe, args) = construct_browser_args(&browser, "https://example.com").unwrap();
+        assert_eq!(exe, "C:\\chrome.exe");
+        assert_eq!(args[0], "https://example.com");
 
-    #[test]
-    fn test_resolve_browser_path() {
-        let path = resolve_browser_path(Some("default"));
-        assert!(path.is_ok());
+        let bad_browser = BrowserInfo {
+            id: "firefox".to_string(),
+            name: "Firefox".to_string(),
+            exe_path: None,
+        };
+        assert!(construct_browser_args(&bad_browser, "https://example.com").is_err());
     }
 }

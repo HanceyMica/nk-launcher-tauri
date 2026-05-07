@@ -38,7 +38,7 @@ fn write_error_log(app: &AppHandle, message: &str) {
     let log_dir = get_log_dir(app);
     let date_str = chrono::Local::now().format("%Y-%m-%d").to_string();
     let log_file = log_dir.join(format!("error-{}.txt", date_str));
-    
+
     if let Ok(mut file) = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
@@ -93,12 +93,16 @@ fn setup_tray(app: &AppHandle) -> Result<(), error::AppError> {
     Ok(())
 }
 
-
 fn update_window_position(window: &WebviewWindow) -> Result<(), AppError> {
-    if let Some(monitor) = window.primary_monitor().map_err(|e| AppError::Ui(e.to_string()))? {
+    if let Some(monitor) = window
+        .primary_monitor()
+        .map_err(|e| AppError::Ui(e.to_string()))?
+    {
         let scale = monitor.scale_factor();
         let size = monitor.size();
-        let win_size = window.outer_size().map_err(|e| AppError::Ui(e.to_string()))?;
+        let win_size = window
+            .outer_size()
+            .map_err(|e| AppError::Ui(e.to_string()))?;
 
         let screen_w = size.width as f64 / scale;
         let screen_h = size.height as f64 / scale;
@@ -128,14 +132,70 @@ fn toggle_window_visibility(app: &AppHandle) {
     }
 }
 
-fn setup_global_shortcut(app: &AppHandle, _state: State<'_, AppState>) {
-    let handle = app.clone();
-    let shortcut = Shortcut::new(Some(Modifiers::ALT), Code::Space);
-    app.global_shortcut().on_shortcut(shortcut, move |_app, _shortcut, event| {
-        if event.state == ShortcutState::Pressed {
-            toggle_window_visibility(&handle);
+fn parse_shortcut(shortcut_str: &str) -> Result<Shortcut, String> {
+    let parts: Vec<&str> = shortcut_str.split('+').collect();
+    if parts.is_empty() {
+        return Err("Empty shortcut".to_string());
+    }
+
+    let key = parts.last().unwrap();
+    let code = key_string_to_code(key).ok_or_else(|| format!("Unknown key: {}", key))?;
+
+    let mut mods = Modifiers::empty();
+    for m in parts.iter().take(parts.len() - 1) {
+        match m.to_uppercase().as_str() {
+            "CTRL" | "CONTROL" => mods |= Modifiers::CONTROL,
+            "ALT" => mods |= Modifiers::ALT,
+            "SHIFT" => mods |= Modifiers::SHIFT,
+            "WIN" | "META" => mods |= Modifiers::META,
+            _ => return Err(format!("Unknown modifier: {}", m)),
         }
-    }).unwrap();
+    }
+
+    Ok(Shortcut::new(
+        if mods.is_empty() { None } else { Some(mods) },
+        code,
+    ))
+}
+
+fn setup_global_shortcut(app: &AppHandle, state: State<'_, AppState>) {
+    let handle = app.clone();
+    let shortcut_str = {
+        let config = state.config.lock();
+        config
+            .get_str("global/shortcut")
+            .unwrap_or_else(|_| "Alt+Space".to_string())
+    };
+
+    let new_shortcut = match parse_shortcut(&shortcut_str) {
+        Ok(s) => s,
+        Err(e) => {
+            error!(
+                "Failed to parse saved shortcut: {}, falling back to Alt+Space",
+                e
+            );
+            Shortcut::new(Some(Modifiers::ALT), Code::Space)
+        }
+    };
+
+    let current_hotkey = state.current_hotkey.clone();
+    if let Err(e) = register_hotkey_logic(&app.clone(), new_shortcut.clone(), &current_hotkey)
+    {
+        error!(
+            "Failed to register saved shortcut: {}, falling back to Alt+Space",
+            e
+        );
+        let fallback = Shortcut::new(Some(Modifiers::ALT), Code::Space);
+        let _ = register_hotkey_logic(&app.clone(), fallback.clone(), &current_hotkey);
+    }
+
+    let _ = app
+        .global_shortcut()
+        .on_shortcut(new_shortcut, move |_app, _shortcut, event| {
+            if event.state == ShortcutState::Released {
+                toggle_window_visibility(&handle);
+            }
+        });
 }
 
 #[tauri::command]
@@ -163,7 +223,9 @@ async fn get_mode(state: State<'_, AppState>) -> Result<String, String> {
 #[tauri::command]
 async fn set_mode(mode: String, state: State<'_, AppState>) -> Result<(), String> {
     let mut config = state.config.lock();
-    config.set("global/mode", serde_json::json!(mode)).map_err(|e| e.to_string())
+    config
+        .set("global/mode", serde_json::json!(mode))
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -200,33 +262,101 @@ async fn fuzzy_search(query: String, entries: Vec<db::Entry>) -> Vec<db::Entry> 
     config::fuzzy_search(&query, entries)
 }
 
-#[tauri::command]
-async fn list_browsers() -> Result<Vec<browser::BrowserInfo>, String> {
-    browser::enumerate_browsers().map_err(|e| e.to_string())
+fn get_custom_browsers(state: &State<'_, AppState>) -> Vec<browser::BrowserInfo> {
+    state
+        .config
+        .lock()
+        .get("global/custom_browsers")
+        .and_then(|v| serde_json::from_value(v).map_err(|e| AppError::Config(e.to_string())))
+        .unwrap_or_else(|_| Vec::new())
 }
 
 #[tauri::command]
-async fn open_url(url: String, browser_id: Option<String>, app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+async fn list_browsers(state: State<'_, AppState>) -> Result<Vec<browser::BrowserInfo>, String> {
+    let mut browsers = browser::enumerate_browsers().map_err(|e| e.to_string())?;
+    let custom = get_custom_browsers(&state);
+
+    // Merge custom browsers
+    for cb in custom {
+        if !browsers.iter().any(|b| b.id == cb.id) {
+            browsers.push(cb);
+        }
+    }
+
+    Ok(browsers)
+}
+
+#[tauri::command]
+async fn add_custom_browser(
+    name: String,
+    path: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let id = format!("custom_{}", name.to_lowercase().replace(" ", "_"));
+    let new_browser = browser::BrowserInfo {
+        id: id.clone(),
+        name: name.clone(),
+        exe_path: Some(path.clone()),
+    };
+
+    let mut custom = get_custom_browsers(&state);
+    if let Some(existing) = custom.iter_mut().find(|b| b.id == id) {
+        existing.exe_path = Some(path);
+        existing.name = name;
+    } else {
+        custom.push(new_browser);
+    }
+
+    let mut config = state.config.lock();
+    config
+        .set("global/custom_browsers", serde_json::json!(custom))
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+async fn open_url(
+    url: String,
+    browser_id: Option<String>,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
     let browser_cmd = if let Some(_bid) = browser_id {
-        state.config.lock().get_str(&format!("global/default_browser")).ok()
+        state
+            .config
+            .lock()
+            .get_str(&format!("global/default_browser"))
+            .ok()
             .and_then(|s| if s.is_empty() { None } else { Some(s) })
     } else {
         // If frontend didn't pass a specific browser id, read from global config
-        state.config.lock().get_str("global/default_browser").ok()
+        state
+            .config
+            .lock()
+            .get_str("global/default_browser")
+            .ok()
             .and_then(|s| if s.is_empty() { None } else { Some(s) })
     };
 
-    let exe_path_res = browser::resolve_browser_path(browser_cmd.as_deref())
-        .map_err(|e| e.to_string());
-    
+    let mut exe_path_res =
+        browser::resolve_browser_path(browser_cmd.as_deref()).map_err(|e| e.to_string());
+
+    // Check custom browsers if not found
+    if let Ok(None) = exe_path_res {
+        if let Some(id) = browser_cmd.as_deref() {
+            let custom = get_custom_browsers(&state);
+            if let Some(b) = custom.iter().find(|b| b.id == id) {
+                exe_path_res = Ok(b.exe_path.clone());
+            }
+        }
+    }
+
     match exe_path_res {
-        Ok(Some(path)) => {
-            browser::open_url_with_browser(&url, &path).map_err(|e| {
-                let msg = e.to_string();
-                write_error_log(&app, &msg);
-                msg
-            })
-        },
+        Ok(Some(path)) => browser::open_url_with_browser(&url, &path).map_err(|e| {
+            let msg = e.to_string();
+            write_error_log(&app, &msg);
+            msg
+        }),
         _ => {
             // Fallback to system default
             use tauri_plugin_opener::OpenerExt;
@@ -241,13 +371,11 @@ async fn open_url(url: String, browser_id: Option<String>, app: AppHandle, state
 
 #[tauri::command]
 async fn open_app(path: String, app: AppHandle) -> Result<(), String> {
-    std::process::Command::new(&path)
-        .spawn()
-        .map_err(|e| {
-            let msg = format!("Failed to open {}: {}", path, e);
-            write_error_log(&app, &msg);
-            msg
-        })?;
+    std::process::Command::new(&path).spawn().map_err(|e| {
+        let msg = format!("Failed to open {}: {}", path, e);
+        write_error_log(&app, &msg);
+        msg
+    })?;
     Ok(())
 }
 
@@ -321,11 +449,15 @@ fn key_string_to_code(key: &str) -> Option<Code> {
 
 impl hotkey::HotkeyProvider for AppHandle {
     fn register(&self, shortcut: Shortcut) -> Result<(), String> {
-        self.global_shortcut().register(shortcut).map_err(|e| e.to_string())
+        self.global_shortcut()
+            .register(shortcut)
+            .map_err(|e| e.to_string())
     }
 
     fn unregister(&self, shortcut: Shortcut) -> Result<(), String> {
-        self.global_shortcut().unregister(shortcut).map_err(|e| e.to_string())
+        self.global_shortcut()
+            .unregister(shortcut)
+            .map_err(|e| e.to_string())
     }
 
     fn is_registered(&self, shortcut: Shortcut) -> bool {
@@ -370,18 +502,24 @@ async fn register_hotkey(
     let code = key_string_to_code(&key).ok_or_else(|| format!("Unknown key: {}", key))?;
 
     let new_shortcut = Shortcut::new(
-        if mods.is_empty() { None } else { Some(mods.iter().fold(Modifiers::empty(), |acc, m| acc | *m)) },
+        if mods.is_empty() {
+            None
+        } else {
+            Some(mods.iter().fold(Modifiers::empty(), |acc, m| acc | *m))
+        },
         code,
     );
 
     register_hotkey_logic(&app, new_shortcut.clone(), &state.current_hotkey)?;
 
     let handle = app.clone();
-    let _ = app.global_shortcut().on_shortcut(new_shortcut, move |_app, _shortcut, event| {
-        if event.state == ShortcutState::Pressed {
-            toggle_window_visibility(&handle);
-        }
-    });
+    let _ = app
+        .global_shortcut()
+        .on_shortcut(new_shortcut, move |_app, _shortcut, event| {
+            if event.state == ShortcutState::Released {
+                toggle_window_visibility(&handle);
+            }
+        });
 
     Ok(())
 }
@@ -407,13 +545,31 @@ async fn check_hotkey_conflict(
     let code = key_string_to_code(&key).ok_or_else(|| format!("Unknown key: {}", key))?;
 
     let shortcut = Shortcut::new(
-        if mods.is_empty() { None } else { Some(mods.iter().fold(Modifiers::empty(), |acc, m| acc | *m)) },
+        if mods.is_empty() {
+            None
+        } else {
+            Some(mods.iter().fold(Modifiers::empty(), |acc, m| acc | *m))
+        },
         code,
     );
 
-    let registered = app.global_shortcut().is_registered(shortcut);
+    if app.global_shortcut().is_registered(shortcut) {
+        // Already registered by us, so no system conflict
+        return Ok(false);
+    }
 
-    Ok(registered)
+    // Try to register to check for system-wide conflict
+    match app.global_shortcut().register(shortcut) {
+        Ok(_) => {
+            // Success means no conflict. Unregister it so it can be registered for real later.
+            let _ = app.global_shortcut().unregister(shortcut);
+            Ok(false)
+        }
+        Err(_) => {
+            // Failed to register means it's conflicting
+            Ok(true)
+        }
+    }
 }
 
 #[tauri::command]
@@ -427,7 +583,9 @@ async fn export_config(state: State<'_, AppState>) -> Result<String, String> {
 async fn import_config(json: String, state: State<'_, AppState>) -> Result<(), String> {
     let mut config = state.config.lock();
     let mut db = state.db.lock();
-    config.import_json(&mut db, &json).map_err(|e| e.to_string())
+    config
+        .import_json(&mut db, &json)
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -451,14 +609,27 @@ async fn hide_window(app: AppHandle) -> Result<(), String> {
 #[tauri::command]
 async fn get_has_launched(state: State<'_, AppState>) -> Result<bool, String> {
     let config = state.config.lock();
-    let val = config.get("global/has_launched").map_err(|e| e.to_string())?;
+    let val = config
+        .get("global/has_launched")
+        .map_err(|e| e.to_string())?;
     Ok(val.as_bool().unwrap_or(false))
 }
 
 #[tauri::command]
 async fn mark_launched(state: State<'_, AppState>) -> Result<(), String> {
     let mut config = state.config.lock();
-    config.set("global/has_launched", serde_json::json!(true)).map_err(|e| e.to_string())?;
+    config
+        .set("global/has_launched", serde_json::json!(true))
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+async fn unmark_launched(state: State<'_, AppState>) -> Result<(), String> {
+    let mut config = state.config.lock();
+    config
+        .set("global/has_launched", serde_json::json!(false))
+        .map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -472,7 +643,12 @@ async fn show_settings(app: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
-async fn update_tray_menu(app: AppHandle, show: String, settings: String, quit: String) -> Result<(), String> {
+async fn update_tray_menu(
+    app: AppHandle,
+    show: String,
+    settings: String,
+    quit: String,
+) -> Result<(), String> {
     if let Some(tray) = app.tray_by_id("main") {
         let quit_item = MenuItem::with_id(&app, "quit", &quit, true, None::<&str>)
             .map_err(|e| e.to_string())?;
@@ -504,6 +680,7 @@ async fn resize_window(width: f64, height: f64, app: AppHandle) -> Result<(), St
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
@@ -553,6 +730,7 @@ pub fn run() {
             delete_entry,
             fuzzy_search,
             list_browsers,
+            add_custom_browser,
             open_url,
             open_app,
             register_hotkey,
@@ -564,6 +742,7 @@ pub fn run() {
             resize_window,
             get_has_launched,
             mark_launched,
+            unmark_launched,
             show_settings,
             update_tray_menu,
         ])

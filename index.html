@@ -15,7 +15,7 @@
   <div id="container">
     <div id="search-wrapper">
       <div id="drag-handle" data-tauri-drag-region><i class="fa-solid fa-grip-vertical"></i></div>
-      <input id="search-input" type="text" placeholder="输入搜索..." autocomplete="off" spellcheck="false" />
+      <input id="search-input" type="text" placeholder="输入搜索..." data-i18n-placeholder="search_placeholder" autocomplete="off" spellcheck="false" />
     </div>
     <div id="result-list"></div>
   </div>
@@ -23,7 +23,7 @@
     <div class="config-titlebar" data-tauri-drag-region>
       <div class="titlebar-left">
         <img src="/src-tauri/icons/32x32.png" class="titlebar-icon" />
-        <span class="titlebar-title">设置</span>
+        <span class="titlebar-title" data-i18n="setting">设置</span>
       </div>
       <div class="titlebar-center">
         <input type="text" class="titlebar-search" placeholder="" />
@@ -36,11 +36,11 @@
     </div>
     <div class="config-body">
       <div class="sidebar">
-        <div class="sidebar-item active" data-target="basic-settings">基础设置</div>
-        <div class="sidebar-item" data-target="simple-settings">简单模式设置</div>
-        <div class="sidebar-item" data-target="expert-settings">专家模式设置</div>
-        <div class="sidebar-item" data-target="appearance-settings">外观设置</div>
-        <div class="sidebar-item" data-target="about-settings">关于</div>
+        <div class="sidebar-item active" data-target="basic-settings" data-i18n="basic_settings">基础设置</div>
+        <div class="sidebar-item" data-target="simple-settings" data-i18n="simple_settings">简单模式设置</div>
+        <div class="sidebar-item" data-target="expert-settings" data-i18n="expert_settings">专家模式设置</div>
+        <div class="sidebar-item" data-target="appearance-settings" data-i18n="appearance_settings">外观设置</div>
+        <div class="sidebar-item" data-target="about-settings" data-i18n="about">关于</div>
         <div class="sidebar-footer">
           <p>Version : 0.1.0</p>
           <p>Build: 202605052345-010</p>
@@ -51,14 +51,14 @@
         <div id="basic-settings" class="content-panel active">
           <div class="settings-content-body">
             <div class="setting-item">
-              <span class="setting-label">模式</span>
+              <span class="setting-label" data-i18n="mode">模式</span>
               <fluent-select id="mode-select">
-                <fluent-option value="expert">专家模式</fluent-option>
-                <fluent-option value="simple">简单模式</fluent-option>
+                <fluent-option value="expert" data-i18n="expert_mode">专家模式</fluent-option>
+                <fluent-option value="simple" data-i18n="simple_mode">简单模式</fluent-option>
               </fluent-select>
             </div>
             <div class="setting-item">
-              <span class="setting-label">语言</span>
+              <span class="setting-label" data-i18n="language">语言</span>
               <fluent-select id="lang-select">
                 <fluent-option value="zh">中文</fluent-option>
                 <fluent-option value="en">English</fluent-option>
@@ -66,18 +66,27 @@
               </fluent-select>
             </div>
             <div class="setting-item">
-              <span class="setting-label">默认浏览器</span>
+              <span class="setting-label" data-i18n="browser">默认浏览器</span>
               <fluent-select id="browser-select"></fluent-select>
             </div>
             <div class="setting-item">
-              <span class="setting-label">快捷键</span>
+              <span class="setting-label" data-i18n="add_custom_browser">添加自定义浏览器</span>
+              <div style="display: flex; gap: 8px;">
+                <fluent-text-field id="custom-browser-name" placeholder="浏览器名称" data-i18n-placeholder="browser_name"></fluent-text-field>
+                <fluent-text-field id="custom-browser-path" placeholder="exe路径" data-i18n-placeholder="exe_path" readonly></fluent-text-field>
+                <fluent-button id="btn-select-browser-path" data-i18n="select_file">选择文件</fluent-button>
+                <fluent-button id="btn-add-custom-browser" appearance="accent" data-i18n="add">添加</fluent-button>
+              </div>
+            </div>
+            <div class="setting-item">
+              <span class="setting-label" data-i18n="hotkey">快捷键</span>
               <fluent-text-field id="hotkey-input" placeholder="Alt+Space" readonly></fluent-text-field>
             </div>
             <div class="setting-item">
-              <span class="setting-label">配置管理</span>
+              <span class="setting-label" data-i18n="config_management">配置管理</span>
               <div>
-                <fluent-button id="btn-export-config">导出配置</fluent-button>
-                <fluent-button id="btn-import-config">导入配置</fluent-button>
+                <fluent-button id="btn-export-config" data-i18n="export">导出配置</fluent-button>
+                <fluent-button id="btn-import-config" data-i18n="import">导入配置</fluent-button>
                 <input type="file" id="config-import-input" accept=".json" style="display: none;" />
               </div>
             </div>
@@ -88,9 +97,9 @@
         <div id="simple-settings" class="content-panel">
           <div class="settings-content-body">
             <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 16px;">
-              <span style="font-size: 16px; font-weight: 600;">需要配置的网格：</span>
+              <span style="font-size: 16px; font-weight: 600;" data-i18n="grid_to_config">需要配置的网格：</span>
               <fluent-select id="simple-grid-level-select" style="min-width: 150px;">
-                <fluent-option value="main">主网格</fluent-option>
+                <fluent-option value="main" data-i18n="main_grid">主网格</fluent-option>
               </fluent-select>
             </div>
             <div id="simple-settings-grid" class="settings-nine-grid">
@@ -98,20 +107,20 @@
             </div>
             
             <div id="simple-entry-form" class="entry-form-container" style="margin-top: 16px;">
-              <h3 id="simple-entry-form-title">编辑格子</h3>
+              <h3 id="simple-entry-form-title" data-i18n="edit_grid">编辑格子</h3>
               <fluent-text-field id="simple-cmd" type="hidden" style="display:none;"></fluent-text-field>
-              <fluent-text-field id="simple-title" placeholder="显示名称"></fluent-text-field>
+              <fluent-text-field id="simple-title" placeholder="显示名称" data-i18n-placeholder="display_name"></fluent-text-field>
               <fluent-select id="simple-kind">
-                <fluent-option value="website">网站</fluent-option>
-                <fluent-option value="app">本地应用</fluent-option>
-                <fluent-option value="subgrid">子网格</fluent-option>
+                <fluent-option value="website" data-i18n="website">网站</fluent-option>
+                <fluent-option value="app" data-i18n="local_app">本地应用</fluent-option>
+                <fluent-option value="subgrid" data-i18n="subgrid">子网格</fluent-option>
               </fluent-select>
-              <fluent-text-field id="simple-url" placeholder="URL (网站填写)"></fluent-text-field>
-              <fluent-text-field id="simple-path" placeholder="路径 (应用填写)"></fluent-text-field>
+              <fluent-text-field id="simple-url" placeholder="URL (网站填写)" data-i18n-placeholder="url_placeholder"></fluent-text-field>
+              <fluent-text-field id="simple-path" placeholder="路径 (应用填写)" data-i18n-placeholder="path_placeholder"></fluent-text-field>
               <div style="display: flex; gap: 8px; justify-content: flex-end; margin-top: 8px;">
-                <fluent-button id="btn-save-simple" appearance="accent">保存</fluent-button>
-                <fluent-button id="btn-delete-simple" style="color: var(--error-color);">删除</fluent-button>
-                <fluent-button id="btn-cancel-simple">取消</fluent-button>
+                <fluent-button id="btn-save-simple" appearance="accent" data-i18n="save">保存</fluent-button>
+                <fluent-button id="btn-delete-simple" style="color: var(--error-color);" data-i18n="delete">删除</fluent-button>
+                <fluent-button id="btn-cancel-simple" data-i18n="cancel">取消</fluent-button>
               </div>
             </div>
           </div>
@@ -121,23 +130,23 @@
         <div id="expert-settings" class="content-panel">
           <div class="settings-content-body">
             <div style="display: flex; gap: 8px; margin-bottom: 12px;">
-              <fluent-button id="btn-refresh-expert">刷新</fluent-button>
-              <fluent-button id="btn-add-expert" appearance="accent">新增条目</fluent-button>
+              <fluent-button id="btn-refresh-expert" data-i18n="refresh">刷新</fluent-button>
+              <fluent-button id="btn-add-expert" appearance="accent" data-i18n="add_entry">新增条目</fluent-button>
             </div>
             <div id="expert-entries-list" class="entry-list"></div>
             <div id="expert-entry-form" class="entry-form-container">
-              <h3>新增/编辑专家模式条目</h3>
-              <fluent-text-field id="expert-cmd" placeholder="触发关键字"></fluent-text-field>
-              <fluent-text-field id="expert-title" placeholder="显示名称"></fluent-text-field>
+              <h3 data-i18n="edit_expert_entry">新增/编辑专家模式条目</h3>
+              <fluent-text-field id="expert-cmd" placeholder="触发关键字" data-i18n-placeholder="trigger_keyword"></fluent-text-field>
+              <fluent-text-field id="expert-title" placeholder="显示名称" data-i18n-placeholder="display_name"></fluent-text-field>
               <fluent-select id="expert-kind">
-                <fluent-option value="website">网站</fluent-option>
-                <fluent-option value="app">本地应用</fluent-option>
+                <fluent-option value="website" data-i18n="website">网站</fluent-option>
+                <fluent-option value="app" data-i18n="local_app">本地应用</fluent-option>
               </fluent-select>
-              <fluent-text-field id="expert-url" placeholder="URL (网站填写)"></fluent-text-field>
-              <fluent-text-field id="expert-path" placeholder="路径 (应用填写)"></fluent-text-field>
+              <fluent-text-field id="expert-url" placeholder="URL (网站填写)" data-i18n-placeholder="url_placeholder"></fluent-text-field>
+              <fluent-text-field id="expert-path" placeholder="路径 (应用填写)" data-i18n-placeholder="path_placeholder"></fluent-text-field>
               <div style="display: flex; gap: 8px; justify-content: flex-end; margin-top: 8px;">
-                <fluent-button id="btn-save-expert" appearance="accent">保存</fluent-button>
-                <fluent-button id="btn-cancel-expert">取消</fluent-button>
+                <fluent-button id="btn-save-expert" appearance="accent" data-i18n="save">保存</fluent-button>
+                <fluent-button id="btn-cancel-expert" data-i18n="cancel">取消</fluent-button>
               </div>
             </div>
           </div>
@@ -147,35 +156,35 @@
         <div id="appearance-settings" class="content-panel">
           <div class="settings-content-body">
             <div class="setting-item">
-              <span class="setting-label">主题</span>
+              <span class="setting-label" data-i18n="theme">主题</span>
               <fluent-select id="theme-select">
-                <fluent-option value="system">跟随系统</fluent-option>
-                <fluent-option value="light">明亮</fluent-option>
-                <fluent-option value="dark">暗黑</fluent-option>
+                <fluent-option value="system" data-i18n="system">跟随系统</fluent-option>
+                <fluent-option value="light" data-i18n="light">明亮</fluent-option>
+                <fluent-option value="dark" data-i18n="dark">暗黑</fluent-option>
               </fluent-select>
             </div>
             <div class="setting-item">
-              <span class="setting-label">背景图片</span>
+              <span class="setting-label" data-i18n="bg_image">背景图片</span>
               <div>
-                <fluent-button id="btn-upload-bg">上传图片</fluent-button>
-                <fluent-button id="btn-clear-bg">清除背景</fluent-button>
+                <fluent-button id="btn-upload-bg" data-i18n="upload_image">上传图片</fluent-button>
+                <fluent-button id="btn-clear-bg" data-i18n="clear_bg">清除背景</fluent-button>
                 <input type="file" id="bg-upload-input" accept="image/*" style="display: none;" />
               </div>
             </div>
             <div class="setting-item">
-              <span class="setting-label">背景模糊度</span>
+              <span class="setting-label" data-i18n="bg_blur">背景模糊度</span>
               <input type="range" id="bg-blur-slider" min="0" max="50" value="20" class="setting-slider" />
             </div>
             <div class="setting-item">
-              <span class="setting-label">内容透明度</span>
+              <span class="setting-label" data-i18n="content_opacity">内容透明度</span>
               <input type="range" id="bg-opacity-slider" min="0" max="100" value="60" class="setting-slider" />
             </div>
             <div class="setting-item">
-              <span class="setting-label">搜索框透明度</span>
+              <span class="setting-label" data-i18n="search_opacity">搜索框透明度</span>
               <input type="range" id="search-opacity-slider" min="0" max="100" value="100" class="setting-slider" />
             </div>
             <div class="setting-item">
-              <span class="setting-label">搜索框长度</span>
+              <span class="setting-label" data-i18n="search_width">搜索框长度</span>
               <input type="range" id="search-width-slider" min="300" max="1000" value="600" step="10" class="setting-slider" />
             </div>
           </div>
@@ -185,17 +194,117 @@
         <div id="about-settings" class="content-panel">
           <div class="about-body">
             <h1>nk-launcher</h1>
-            <p>版本 0.1.0</p>
-            <p style="margin: 16px 0;">欢迎使用 nk-launcher</p>
-            <p style="margin-bottom: 20px;">按下 Alt+Space 唤醒主窗口</p>
-            <p>作者: HarveyMica</p>
+            <p>Version : 0.1.0</p>
+            <p style="margin: 16px 0;" data-i18n="welcome">欢迎使用 nk-launcher</p>
+            <p style="margin-bottom: 20px;" data-i18n="press_alt_space">按下 Alt+Space 唤醒主窗口</p>
+            <p><span data-i18n="author">作者</span>: HarveyMica</p>
             <p><a href="https://github.com/HanceyMica" target="_blank">github.com/HanceyMica</a></p>
             <p><a href="https://x.com/HanceyMica" target="_blank">x.com/HanceyMica</a></p>
+            <div style="margin-top: 30px;">
+              <fluent-button id="btn-clear-launched" style="color: var(--error-color);" data-i18n="restart_welcome">重新观看欢迎向导</fluent-button>
+            </div>
           </div>
         </div>
       </div>
     </div>
   </div>
+
+  <div id="welcome-window">
+    <div class="config-titlebar" data-tauri-drag-region>
+      <div class="titlebar-left">
+        <img src="/src-tauri/icons/32x32.png" class="titlebar-icon" />
+        <span class="titlebar-title">nk-launcher</span>
+      </div>
+      <div class="titlebar-center"></div>
+      <div class="titlebar-right">
+        <div class="titlebar-btn btn-welcome-minimize"><i class="fa-solid fa-minus"></i></div>
+        <div class="titlebar-btn btn-welcome-maximize"><i class="fa-regular fa-square"></i></div>
+        <div class="titlebar-btn btn-welcome-close"><i class="fa-solid fa-xmark"></i></div>
+      </div>
+    </div>
+    <div class="welcome-body">
+      
+      <!-- Slide 1 -->
+      <div class="welcome-slide active" id="slide-1">
+        <h2 data-i18n="welcome">欢迎选用 nk-launcher!</h2>
+        <div class="welcome-placeholder" data-i18n="placeholder_desc">[图片/视频位占位说明]</div>
+        <p data-i18n="welcome_desc1">这是一个以键盘操作为主要使用手段的九宫格快速启动器。</p>
+        <div style="margin: 20px 0;">
+          <span class="setting-label" data-i18n="language">语言</span>
+          <fluent-select id="welcome-lang-select" style="margin-left: 8px;">
+            <fluent-option value="zh">中文</fluent-option>
+            <fluent-option value="en">English</fluent-option>
+            <fluent-option value="ja">日本語</fluent-option>
+          </fluent-select>
+        </div>
+      </div>
+
+      <!-- Slide 2 -->
+      <div class="welcome-slide" id="slide-2">
+        <h2 data-i18n="simple_mode_intro">简单模式介绍</h2>
+        <div class="welcome-placeholder" data-i18n="placeholder_desc">[图片/视频位占位说明]</div>
+        <p data-i18n="simple_mode_desc">通过九宫格直观展示配置，输入数字即可快速触发动作。</p>
+      </div>
+
+      <!-- Slide 3 -->
+      <div class="welcome-slide" id="slide-3">
+        <h2 data-i18n="expert_mode_intro">专家模式介绍</h2>
+        <div class="welcome-placeholder" data-i18n="placeholder_desc">[图片/视频位占位说明]</div>
+        <p data-i18n="expert_mode_desc">基于缩写命令的极速匹配，支持模糊搜索，满足高级用户的高效需求。</p>
+      </div>
+
+      <!-- Slide 4 -->
+      <div class="welcome-slide" id="slide-4">
+        <h2 data-i18n="select_mode">请选择使用模式</h2>
+        <div class="welcome-placeholder" data-i18n="placeholder_desc">[图片/视频位占位说明]</div>
+        <p data-i18n="select_mode_desc">选择最适合您的启动方式。</p>
+        <div style="margin: 30px 0; display: flex; justify-content: center;">
+          <fluent-radio-group id="welcome-mode-group" orientation="horizontal" style="gap: 16px;">
+            <fluent-radio class="rb-welcome-mode" value="simple" data-i18n="simple_mode">简单模式</fluent-radio>
+            <fluent-radio class="rb-welcome-mode" value="expert" data-i18n="expert_mode">专家模式</fluent-radio>
+          </fluent-radio-group>
+        </div>
+      </div>
+
+      <!-- Slide 5 -->
+      <div class="welcome-slide" id="slide-5">
+        <h2 data-i18n="select_theme">请选择外观主题</h2>
+        <div class="welcome-placeholder" data-i18n="placeholder_desc">[图片/视频位占位说明]</div>
+        <p data-i18n="select_theme_desc">选择您偏好的界面颜色。</p>
+        <div style="margin: 30px 0; display: flex; gap: 16px;">
+          <fluent-button class="btn-welcome-theme" data-theme="system" data-i18n="system">跟随系统</fluent-button>
+          <fluent-button class="btn-welcome-theme" data-theme="light" data-i18n="light_mode">明亮模式</fluent-button>
+          <fluent-button class="btn-welcome-theme" data-theme="dark" data-i18n="dark_mode">暗黑模式</fluent-button>
+        </div>
+      </div>
+
+      <!-- Slide 6 -->
+      <div class="welcome-slide" id="slide-6">
+        <h2 data-i18n="all_set">所有设置完毕！</h2>
+        <div class="welcome-placeholder" data-i18n="placeholder_desc">[图片/视频位占位说明]</div>
+        <p style="margin-bottom: 20px;" data-i18n="all_set_desc">配置完毕后，按下 Alt+Space 即可随时唤醒主窗口。</p>
+        <fluent-button id="btn-finish-welcome" appearance="accent" data-i18n="close_and_start">关闭并开始使用</fluent-button>
+      </div>
+
+      <!-- Navigation -->
+      <div class="welcome-nav-container">
+        <div class="welcome-dots">
+          <span class="dot active"></span>
+          <span class="dot"></span>
+          <span class="dot"></span>
+          <span class="dot"></span>
+          <span class="dot"></span>
+          <span class="dot"></span>
+        </div>
+        <div class="welcome-nav">
+          <fluent-button id="btn-welcome-prev" disabled data-i18n="prev_step">上一步</fluent-button>
+          <fluent-button id="btn-welcome-next" appearance="accent" data-i18n="next_step">下一步</fluent-button>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
   <div id="toast"></div>
   <script type="module" src="/src/index.ts"></script>
 </body>

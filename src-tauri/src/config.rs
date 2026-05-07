@@ -67,10 +67,18 @@ impl ConfigManager {
 
     pub fn get_all(&self) -> Result<AppConfig, AppError> {
         Ok(AppConfig {
-            version: self.get_str("global/version").unwrap_or_else(|_| "0.1.0".to_string()),
-            mode: self.get_str("global/mode").unwrap_or_else(|_| "expert".to_string()),
-            theme: self.get_str("global/theme").unwrap_or_else(|_| "system".to_string()),
-            language: self.get_str("global/language").unwrap_or_else(|_| "zh".to_string()),
+            version: self
+                .get_str("global/version")
+                .unwrap_or_else(|_| "0.1.0".to_string()),
+            mode: self
+                .get_str("global/mode")
+                .unwrap_or_else(|_| "expert".to_string()),
+            theme: self
+                .get_str("global/theme")
+                .unwrap_or_else(|_| "system".to_string()),
+            language: self
+                .get_str("global/language")
+                .unwrap_or_else(|_| "zh".to_string()),
             default_browser: self.get_str("global/default_browser").ok(),
         })
     }
@@ -83,7 +91,10 @@ impl ConfigManager {
                 let parts: Vec<&str> = k.splitn(2, '/').collect();
                 let ns = parts.get(0).unwrap_or(&"global");
                 let key_str = k.as_str();
-                let key = parts.get(1).map(|s| s.to_string()).unwrap_or_else(|| key_str.to_string());
+                let key = parts
+                    .get(1)
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| key_str.to_string());
                 [ns.to_string(), key, v]
             })
             .collect();
@@ -135,12 +146,11 @@ pub fn fuzzy_search(query: &str, entries: Vec<Entry>) -> Vec<Entry> {
             let url = entry.url.as_ref();
             let path = entry.path.as_ref();
 
-            let sub_score = url.and_then(|u| matcher.fuzzy_match(u, query))
+            let sub_score = url
+                .and_then(|u| matcher.fuzzy_match(u, query))
                 .or_else(|| path.and_then(|p| matcher.fuzzy_match(p, query)));
 
-            let best = key_score
-                .max(title_score)
-                .or(sub_score);
+            let best = key_score.max(title_score).or(sub_score);
 
             best.map(|score| (score, entry))
         })
@@ -156,15 +166,13 @@ mod tests {
 
     #[test]
     fn test_fuzzy_match_key() {
-        let entries = vec![
-            Entry {
-                command: "bd".to_string(),
-                kind: "website".to_string(),
-                title: "百度".to_string(),
-                url: Some("https://www.baidu.com".to_string()),
-                path: None,
-            },
-        ];
+        let entries = vec![Entry {
+            command: "bd".to_string(),
+            kind: "website".to_string(),
+            title: "百度".to_string(),
+            url: Some("https://www.baidu.com".to_string()),
+            path: None,
+        }];
 
         let result = fuzzy_search("bd", entries.clone());
         assert!(!result.is_empty());
@@ -176,15 +184,13 @@ mod tests {
 
     #[test]
     fn test_fuzzy_match_title() {
-        let entries = vec![
-            Entry {
-                command: "bd".to_string(),
-                kind: "website".to_string(),
-                title: "百度".to_string(),
-                url: Some("https://www.baidu.com".to_string()),
-                path: None,
-            },
-        ];
+        let entries = vec![Entry {
+            command: "bd".to_string(),
+            kind: "website".to_string(),
+            title: "百度".to_string(),
+            url: Some("https://www.baidu.com".to_string()),
+            path: None,
+        }];
 
         let result = fuzzy_search("百", entries);
         assert!(!result.is_empty());
@@ -195,8 +201,12 @@ mod tests {
         let db = Database::new(std::path::Path::new(":memory:")).unwrap();
         let mut manager = ConfigManager::new(db).unwrap();
 
-        manager.set("global/mode", serde_json::json!("expert")).unwrap();
-        manager.set("expert/test_key", serde_json::json!("test_value")).unwrap();
+        manager
+            .set("global/mode", serde_json::json!("expert"))
+            .unwrap();
+        manager
+            .set("expert/test_key", serde_json::json!("test_value"))
+            .unwrap();
 
         let json = manager.export_json(&manager.db).unwrap();
         assert!(json.contains("\"version\": \"0.1.0\""));

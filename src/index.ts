@@ -6,14 +6,20 @@ import {
   fluentSelect,
   fluentOption,
   fluentTextField,
-  fluentButton
+  fluentButton,
+  fluentRadio,
+  fluentRadioGroup,
+  baseLayerLuminance,
+  StandardLuminance
 } from "@fluentui/web-components";
 
 provideFluentDesignSystem().register(
   fluentSelect(),
   fluentOption(),
   fluentTextField(),
-  fluentButton()
+  fluentButton(),
+  fluentRadio(),
+  fluentRadioGroup()
 );
 
 export interface Entry {
@@ -57,9 +63,71 @@ const searchInput = document.getElementById("search-input") as HTMLInputElement;
 const resultList = document.getElementById("result-list") as HTMLDivElement;
 const container = document.getElementById("container") as HTMLDivElement;
 const configWindow = document.getElementById("config-window") as HTMLDivElement;
+const welcomeWindow = document.getElementById("welcome-window") as HTMLDivElement;
+
+function applyTheme(theme: string) {
+  if (theme === "dark") {
+    document.body.dataset.theme = "dark";
+    baseLayerLuminance.setValueFor(document.body, StandardLuminance.DarkMode);
+    baseLayerLuminance.setValueFor(document.documentElement, StandardLuminance.DarkMode);
+  } else if (theme === "light") {
+    document.body.dataset.theme = "light";
+    baseLayerLuminance.setValueFor(document.body, StandardLuminance.LightMode);
+    baseLayerLuminance.setValueFor(document.documentElement, StandardLuminance.LightMode);
+  } else {
+    if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+      document.body.dataset.theme = "dark";
+      baseLayerLuminance.setValueFor(document.body, StandardLuminance.DarkMode);
+      baseLayerLuminance.setValueFor(document.documentElement, StandardLuminance.DarkMode);
+    } else {
+      document.body.dataset.theme = "light";
+      baseLayerLuminance.setValueFor(document.body, StandardLuminance.LightMode);
+      baseLayerLuminance.setValueFor(document.documentElement, StandardLuminance.LightMode);
+    }
+  }
+}
+
+if (window.matchMedia) {
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+    const themeSelect = document.getElementById("theme-select") as HTMLSelectElement;
+    if (!themeSelect || themeSelect.value === "system") {
+      applyTheme("system");
+    }
+  });
+}
+
+function updateI18nUI() {
+  document.querySelectorAll("[data-i18n]").forEach((el) => {
+    const key = el.getAttribute("data-i18n");
+    if (key) {
+      el.textContent = t(key);
+    }
+  });
+
+  document.querySelectorAll("[data-i18n-placeholder]").forEach((el) => {
+    const key = el.getAttribute("data-i18n-placeholder");
+    if (key) {
+      el.setAttribute("placeholder", t(key));
+    }
+  });
+}
+function showWelcomeWindow() {
+  settingsVisible = true;
+  if (welcomeWindow) welcomeWindow.classList.add("visible");
+  if (container) container.style.display = "none";
+  if (configWindow) configWindow.classList.remove("visible");
+  invoke("resize_window", { width: 700.0, height: 500.0 });
+}
+
+function hideWelcomeWindow() {
+  settingsVisible = false;
+  if (welcomeWindow) welcomeWindow.classList.remove("visible");
+  if (container) container.style.display = "block";
+}
 
 function showConfigWindow(targetId: string = "basic-settings") {
   settingsVisible = true;
+  if (welcomeWindow) welcomeWindow.classList.remove("visible");
   if (configWindow) configWindow.classList.add("visible");
   if (container) container.style.display = "none";
   invoke("resize_window", { width: 700.0, height: 500.0 });
@@ -119,6 +187,23 @@ document.getElementById("btn-close")?.addEventListener("click", () => {
   hideConfigWindow();
 });
 
+document.querySelector(".btn-welcome-minimize")?.addEventListener("click", () => {
+  getCurrentWindow().minimize();
+});
+
+document.querySelector(".btn-welcome-maximize")?.addEventListener("click", async () => {
+  const win = getCurrentWindow();
+  if (await win.isMaximized()) {
+    win.unmaximize();
+  } else {
+    win.maximize();
+  }
+});
+
+document.querySelector(".btn-welcome-close")?.addEventListener("click", () => {
+  hideWelcomeWindow();
+});
+
 document.querySelectorAll(".sidebar-item").forEach(item => {
   item.addEventListener("click", () => {
     const target = item.getAttribute("data-target");
@@ -129,13 +214,7 @@ async function loadConfig() {
   try {
     const config = await invoke<AppConfig>("get_config");
     currentMode = config.mode as "expert" | "simple";
-    if (config.theme === "dark") {
-      document.body.dataset.theme = "dark";
-    } else if (config.theme === "light") {
-      document.body.dataset.theme = "light";
-    } else {
-      delete document.body.dataset.theme;
-    }
+    applyTheme(config.theme || "system");
     setLanguage(config.language || "zh");
     
     if (config.bg_image) {
@@ -206,7 +285,7 @@ function setCollapsed(collapse: boolean) {
   collapsed = collapse;
   if (collapse) {
     if (currentMode === "simple") {
-      invoke("resize_window", { width: 300.0, height: 40.0 });
+      invoke("resize_window", { width: 340.0, height: 40.0 });
     } else {
       invoke("resize_window", { width: currentSearchWidth, height: 40.0 });
     }
@@ -231,7 +310,17 @@ searchInput?.addEventListener("input", async (e) => {
     } else {
       if (entry && entry.kind !== "subgrid") {
         collapsed = false;
-        renderResults([entry]);
+        
+        // 格式化提示文本，比如 "1：跳转到 百度"
+        const actionText = entry.kind === "website" ? "跳转到" : "打开";
+        const formattedEntry = {
+          ...entry,
+          title: `${searchQuery}：${actionText} ${entry.title}`,
+          url: "", // 不显示多余信息
+          path: ""
+        };
+        
+        renderResults([formattedEntry]);
       } else {
         renderResults([]);
       }
@@ -260,12 +349,19 @@ searchInput?.addEventListener("keydown", async (e) => {
   if (e.key === "Enter") {
     if (commandMode) {
       await executeCommand(searchQuery.slice(1));
+    } else if (currentMode === "simple" && /^[1-9]{1,2}$/.test(searchQuery)) {
+      const entry = entries.find(e => e.command === searchQuery);
+      if (entry && entry.kind !== "subgrid") {
+        await executeEntry(entry);
+      }
     } else {
       const results = await searchEntries(searchQuery);
       if (results[selectedIndex]) {
         await executeEntry(results[selectedIndex]);
       }
     }
+    
+    // 对于某些命令或执行可能已经隐藏了窗口，或者还需要清空搜索栏
     searchQuery = "";
     searchInput.value = "";
     if (settingsVisible) {
@@ -305,23 +401,23 @@ searchInput?.addEventListener("keydown", async (e) => {
 
 function renderCommandSuggestions() {
   const commands = [
-    { cmd: "s", label: t("setting"), action: () => showConfigWindow("settings-content") },
-    { cmd: "d", label: t("dark"), action: async () => { await invoke("save_config", { key: "global/theme", value: "dark" }); document.body.dataset.theme = "dark"; } },
-    { cmd: "l", label: t("light"), action: async () => { await invoke("save_config", { key: "global/theme", value: "light" }); document.body.dataset.theme = "light"; } },
-    { cmd: "w", label: t("system"), action: async () => { await invoke("save_config", { key: "global/theme", value: "system" }); delete document.body.dataset.theme; } },
-    { cmd: "i", label: t("import"), action: () => {
+    { cmd: "s", label: t("setting"), icon: `<i class="fa-solid fa-cog"></i>`, action: () => showConfigWindow("settings-content") },
+    { cmd: "d", label: t("dark"), icon: `<i class="fa-solid fa-moon"></i>`, action: async () => { await invoke("save_config", { key: "global/theme", value: "dark" }); applyTheme("dark"); } },
+    { cmd: "l", label: t("light"), icon: `<i class="fa-solid fa-sun"></i>`, action: async () => { await invoke("save_config", { key: "global/theme", value: "light" }); applyTheme("light"); } },
+    { cmd: "w", label: t("system"), icon: `<i class="fa-solid fa-desktop"></i>`, action: async () => { await invoke("save_config", { key: "global/theme", value: "system" }); applyTheme("system"); } },
+    { cmd: "i", label: t("import"), icon: `<i class="fa-solid fa-file-import"></i>`, action: () => {
       const configImportInput = document.getElementById("config-import-input") as HTMLInputElement;
       if (configImportInput) configImportInput.click();
     } },
-    { cmd: "o", label: t("export"), action: async () => { const json = await invoke<string>("export_config"); downloadJson(json); } },
-    { cmd: "a", label: t("about"), action: () => showConfigWindow("about-content") },
+    { cmd: "o", label: t("export"), icon: `<i class="fa-solid fa-file-export"></i>`, action: async () => { const json = await invoke<string>("export_config"); downloadJson(json); } },
+    { cmd: "a", label: t("about"), icon: `<i class="fa-solid fa-info-circle"></i>`, action: () => showConfigWindow("about-content") },
   ];
 
   const filtered = commands.filter(c => c.cmd.startsWith(searchQuery.slice(1).toLowerCase()));
-  const html = filtered.map((c, i) => `<div class="result-item ${i === selectedIndex ? 'selected' : ''}" data-index="${i}">/${c.cmd} → ${c.label}</div>`).join("");
+  const html = filtered.map((c, i) => `<div class="result-item ${i === selectedIndex ? 'selected' : ''}" data-index="${i}">${c.icon} /${c.cmd} → ${c.label}</div>`).join("");
   resultList.innerHTML = html;
 
-  const targetWidth = currentMode === "simple" ? 300.0 : currentSearchWidth;
+  const targetWidth = currentMode === "simple" ? 340.0 : currentSearchWidth;
   const height = Math.min(40 + filtered.length * 36, 400);
   invoke("resize_window", { width: targetWidth, height: height });
 
@@ -350,9 +446,9 @@ function renderCommandSuggestions() {
 async function executeCommand(cmd: string) {
   const commands: Record<string, () => Promise<void>> = {
     s: () => { showConfigWindow("settings-content"); return Promise.resolve(); },
-    d: async () => { await invoke("save_config", { key: "global/theme", value: "dark" }); document.body.dataset.theme = "dark"; },
-    l: async () => { await invoke("save_config", { key: "global/theme", value: "light" }); document.body.dataset.theme = "light"; },
-    w: async () => { await invoke("save_config", { key: "global/theme", value: "system" }); delete document.body.dataset.theme; },
+    d: async () => { await invoke("save_config", { key: "global/theme", value: "dark" }); applyTheme("dark"); },
+    l: async () => { await invoke("save_config", { key: "global/theme", value: "light" }); applyTheme("light"); },
+    w: async () => { await invoke("save_config", { key: "global/theme", value: "system" }); applyTheme("system"); },
     i: () => {
       const configImportInput = document.getElementById("config-import-input") as HTMLInputElement;
       if (configImportInput) configImportInput.click();
@@ -409,19 +505,19 @@ function renderResults(results: Entry[]) {
     } else {
       resultList.innerHTML = "";
       if (currentMode === "simple" && searchQuery) {
-        invoke("resize_window", { width: 300.0, height: 40.0 });
+        invoke("resize_window", { width: 340.0, height: 40.0 });
       }
     }
     return;
   }
 
   // Always resize window for results
-  const targetWidth = currentMode === "simple" ? 300.0 : currentSearchWidth;
+  const targetWidth = currentMode === "simple" ? 340.0 : currentSearchWidth;
   const height = Math.min(40 + results.length * 36, 400);
   invoke("resize_window", { width: targetWidth, height: height });
 
   const html = results.map((entry, i) => {
-    const icon = entry.kind === "website" ? "🌐" : "📦";
+    const icon = entry.kind === "website" ? `<i class="fa-solid fa-globe"></i>` : `<i class="fa-solid fa-box"></i>`;
     const desc = entry.url || entry.path || "";
     return `<div class="result-item ${i === selectedIndex ? 'selected' : ''}" data-index="${i}">${icon} ${entry.title}<span class="desc">${desc}</span></div>`;
   }).join("");
@@ -434,7 +530,16 @@ function renderResults(results: Entry[]) {
       updateSelection();
     });
     item.addEventListener("click", async () => {
-      const results = await searchEntries(searchQuery);
+      let results = [];
+      if (currentMode === "simple" && /^[1-9]{1,2}$/.test(searchQuery)) {
+        const entry = entries.find(e => e.command === searchQuery);
+        if (entry && entry.kind !== "subgrid") {
+          results = [entry];
+        }
+      } else {
+        results = await searchEntries(searchQuery);
+      }
+      
       if (results[i]) {
         await executeEntry(results[i]);
         searchQuery = "";
@@ -452,7 +557,8 @@ function renderResults(results: Entry[]) {
 }
 
 function renderSimpleGrid(prefix: string = "") {
-  invoke("resize_window", { width: 300.0, height: 234.0 });
+  // 增加高度，为新的自适应网格提供足够的空间展示，包含外边距等
+  invoke("resize_window", { width: 340.0, height: 380.0 });
   
   // Fill 1-9
   let html = `<div id="nine-grid">`;
@@ -460,11 +566,11 @@ function renderSimpleGrid(prefix: string = "") {
     const cmd = prefix + String(i);
     const entry = entries.find(e => e.command === cmd);
     const name = entry ? entry.title : "未设置";
-    let icon = "➕";
+    let icon = `<i class="fa-solid fa-plus"></i>`;
     if (entry) {
-      if (entry.kind === "website") icon = "🌐";
-      else if (entry.kind === "app") icon = "📦";
-      else if (entry.kind === "subgrid") icon = "📁";
+      if (entry.kind === "website") icon = `<i class="fa-solid fa-globe"></i>`;
+      else if (entry.kind === "app") icon = `<i class="fa-solid fa-box"></i>`;
+      else if (entry.kind === "subgrid") icon = `<i class="fa-solid fa-folder"></i>`;
     }
     html += `
       <div class="grid-item" data-cmd="${cmd}">
@@ -477,9 +583,9 @@ function renderSimpleGrid(prefix: string = "") {
   html += `</div>`;
   
   html += `<div id="simple-actions">
-    <fluent-button id="btn-settings" appearance="stealth">${t("setting")}</fluent-button>
-    <fluent-button id="btn-theme" appearance="stealth">${t("theme")}</fluent-button>
-    <fluent-button id="btn-about" appearance="stealth">${t("about")}</fluent-button>
+    <fluent-button id="btn-settings" appearance="stealth"><i class="fa-solid fa-cog"></i> ${t("setting")}</fluent-button>
+    <fluent-button id="btn-theme" appearance="stealth"><i class="fa-solid fa-moon"></i> ${t("theme")}</fluent-button>
+    <fluent-button id="btn-about" appearance="stealth"><i class="fa-solid fa-info-circle"></i> ${t("about")}</fluent-button>
   </div>`;
   
   resultList.innerHTML = html;
@@ -490,7 +596,24 @@ function renderSimpleGrid(prefix: string = "") {
       if (cmd) {
         searchInput.value = cmd;
         searchQuery = cmd;
-        searchInput.dispatchEvent(new Event("input"));
+        
+        const entry = entries.find(e => e.command === cmd);
+        if (entry && entry.kind !== "subgrid") {
+          collapsed = false;
+          
+          // 格式化提示文本，比如 "1：跳转到 百度"
+          const actionText = entry.kind === "website" ? "跳转到" : "打开";
+          const formattedEntry = {
+            ...entry,
+            title: `${searchQuery}：${actionText} ${entry.title}`,
+            url: "", // 不显示多余信息
+            path: ""
+          };
+          
+          renderResults([formattedEntry]);
+        } else {
+          searchInput.dispatchEvent(new Event("input"));
+        }
       }
     });
   });
@@ -498,11 +621,15 @@ function renderSimpleGrid(prefix: string = "") {
   document.getElementById("btn-settings")?.addEventListener("click", () => showConfigWindow("settings-content"));
   document.getElementById("btn-about")?.addEventListener("click", () => showConfigWindow("about-content"));
   document.getElementById("btn-theme")?.addEventListener("click", async () => {
-    const currentTheme = document.body.dataset.theme;
-    const newTheme = currentTheme === "dark" ? "light" : "dark";
-    await invoke("save_config", { key: "global/theme", value: newTheme });
-    document.body.dataset.theme = newTheme;
     const themeSelect = document.getElementById("theme-select") as HTMLSelectElement;
+    const currentTheme = themeSelect ? themeSelect.value : "system";
+    let newTheme = "system";
+    if (currentTheme === "system") newTheme = "dark";
+    else if (currentTheme === "dark") newTheme = "light";
+    else newTheme = "system";
+
+    await invoke("save_config", { key: "global/theme", value: newTheme });
+    applyTheme(newTheme);
     if (themeSelect) themeSelect.value = newTheme;
   });
 }
@@ -528,22 +655,22 @@ function renderSimpleSettingsGrid() {
     const cmd = prefix + String(i);
     const entry = simpleEntries.find(e => e.command === cmd);
     
-    let kindBadge = "未配置";
-    let title = "点击配置";
+    let kindBadge = t("unconfigured");
+    let title = t("click_to_config");
     let desc = "";
     let badgeClass = "";
 
     if (entry) {
       if (entry.kind === "website") {
-        kindBadge = "网址";
+        kindBadge = `<i class="fa-solid fa-globe"></i> ${t("website")}`;
         desc = entry.url || "";
       } else if (entry.kind === "app") {
-        kindBadge = "应用";
+        kindBadge = `<i class="fa-solid fa-box"></i> ${t("app")}`;
         desc = entry.path || "";
       } else if (entry.kind === "subgrid") {
-        kindBadge = "套娃格子";
+        kindBadge = `<i class="fa-solid fa-folder"></i> ${t("subgrid")}`;
         badgeClass = "subgrid";
-        desc = "子网格包含9个格子，不可再嵌套";
+        desc = t("subgrid_desc");
       }
       title = entry.title;
     }
@@ -551,7 +678,7 @@ function renderSimpleSettingsGrid() {
     html += `
       <div class="settings-grid-item" data-cmd="${cmd}">
         <div class="settings-grid-item-header">
-          <span>格子 ${i}</span>
+          <span>${t("grid")} ${i}</span>
           <span class="settings-grid-item-badge ${badgeClass}">${kindBadge}</span>
         </div>
         <div class="settings-grid-item-content">
@@ -644,80 +771,89 @@ function setupSimpleSettingsUI() {
     document.querySelectorAll(".settings-grid-item").forEach(el => el.classList.remove("active"));
   });
 
-  document.getElementById("btn-delete-simple")?.addEventListener("click", async () => {
-    const cmd = (document.getElementById("simple-cmd") as HTMLInputElement).value;
-    if (cmd) {
-      await invoke("delete_entry", { namespace: "simple", key: cmd });
-      
-      // Also delete all child entries if it's a subgrid
-      const entry = simpleEntries.find(e => e.command === cmd);
-      if (entry && entry.kind === "subgrid") {
-        for (let i = 1; i <= 9; i++) {
-          await invoke("delete_entry", { namespace: "simple", key: cmd + String(i) });
+      document.getElementById("btn-delete-simple")?.addEventListener("click", async () => {
+        const cmd = (document.getElementById("simple-cmd") as HTMLInputElement).value;
+        if (cmd) {
+          await invoke("delete_entry", { namespace: "simple", key: cmd });
+          
+          // Also delete all child entries if it's a subgrid
+          const entry = simpleEntries.find(e => e.command === cmd);
+          if (entry && entry.kind === "subgrid") {
+            for (let i = 1; i <= 9; i++) {
+              await invoke("delete_entry", { namespace: "simple", key: cmd + String(i) });
+            }
+          }
+
+          // If we delete a subgrid that we are currently viewing, switch to main
+          if (cmd === currentSimpleGridLevel) {
+            currentSimpleGridLevel = "main";
+          }
+
+          showToast(t("clear_grid_success"));
+          document.getElementById("simple-entry-form")?.classList.remove("active");
+          await loadAndRenderSimpleEntries();
+          updateSimpleGridLevelOptions();
         }
-      }
+      });
 
-      // If we delete a subgrid that we are currently viewing, switch to main
-      if (cmd === currentSimpleGridLevel) {
-        currentSimpleGridLevel = "main";
-      }
+      document.getElementById("btn-save-simple")?.addEventListener("click", async () => {
+        const cmd = (document.getElementById("simple-cmd") as HTMLInputElement).value.trim();
+        const title = (document.getElementById("simple-title") as HTMLInputElement).value.trim();
+        const kind = (document.getElementById("simple-kind") as HTMLSelectElement).value;
+        const url = (document.getElementById("simple-url") as HTMLInputElement).value.trim();
+        const path = (document.getElementById("simple-path") as HTMLInputElement).value.trim();
 
-      showToast("格子已清空");
-      document.getElementById("simple-entry-form")?.classList.remove("active");
-      await loadAndRenderSimpleEntries();
-      updateSimpleGridLevelOptions();
-    }
-  });
+        if (!cmd || !title) {
+          showToast(t("empty_display_name"), true);
+          return;
+        }
 
-  document.getElementById("btn-save-simple")?.addEventListener("click", async () => {
-    const cmd = (document.getElementById("simple-cmd") as HTMLInputElement).value.trim();
-    const title = (document.getElementById("simple-title") as HTMLInputElement).value.trim();
-    const kind = (document.getElementById("simple-kind") as HTMLSelectElement).value;
-    const url = (document.getElementById("simple-url") as HTMLInputElement).value.trim();
-    const path = (document.getElementById("simple-path") as HTMLInputElement).value.trim();
+        const entry: Entry = { command: cmd, title, kind };
+        if (kind === "website") {
+          if (!url) { showToast(t("empty_url"), true); return; }
+          entry.url = url;
+        } else if (kind === "app") {
+          if (!path) { showToast(t("empty_path"), true); return; }
+          entry.path = path;
+        }
 
-    if (!cmd || !title) {
-      showToast("显示名称不能为空", true);
-      return;
-    }
-
-    const entry: Entry = { command: cmd, title, kind };
-    if (kind === "website") {
-      if (!url) { showToast("网站类型的 URL 不能为空", true); return; }
-      entry.url = url;
-    } else if (kind === "app") {
-      if (!path) { showToast("应用类型的路径不能为空", true); return; }
-      entry.path = path;
-    }
-
-    try {
-      await invoke("save_entry", { namespace: "simple", entry });
-      showToast("保存成功");
-      document.getElementById("simple-entry-form")?.classList.remove("active");
-      await loadAndRenderSimpleEntries();
-      updateSimpleGridLevelOptions();
-    } catch (e) {
-      showToast(String(e), true);
-    }
-  });
+        try {
+          await invoke("save_entry", { namespace: "simple", entry });
+          showToast(t("save_success"));
+          document.getElementById("simple-entry-form")?.classList.remove("active");
+          await loadAndRenderSimpleEntries();
+          updateSimpleGridLevelOptions();
+        } catch (e) {
+          showToast(String(e), true);
+        }
+      });
 }
 
 async function loadAndRenderExpertEntries() {
   expertEntries = await invoke<Entry[]>("get_entries", { namespace: "expert" });
+  renderExpertEntries();
+}
+
+function renderExpertEntries() {
   const list = document.getElementById("expert-entries-list");
   if (!list) return;
-  list.innerHTML = expertEntries.map(e => `
+  list.innerHTML = expertEntries.map(e => {
+    let icon = "";
+    if (e.kind === "website") icon = `<i class="fa-solid fa-globe"></i>`;
+    else if (e.kind === "app") icon = `<i class="fa-solid fa-box"></i>`;
+    
+    return `
     <div class="entry-item-row">
       <div class="entry-item-info">
-        <strong>[${e.command}] ${e.title}</strong>
-        <span>类型: ${e.kind} | 目标: ${e.url || e.path || "无"}</span>
+        <strong>[${e.command}] ${icon} ${e.title}</strong>
+        <span>${t("type")}: ${t(e.kind)} | ${t("target")}: ${e.url || e.path || t("none")}</span>
       </div>
       <div>
-        <fluent-button class="btn-edit-expert" data-cmd="${e.command}">编辑</fluent-button>
-        <fluent-button class="btn-delete-expert" data-cmd="${e.command}" style="color: var(--error-color);">删除</fluent-button>
+        <fluent-button class="btn-edit-expert" data-cmd="${e.command}">${t("edit")}</fluent-button>
+        <fluent-button class="btn-delete-expert" data-cmd="${e.command}" style="color: var(--error-color);">${t("delete")}</fluent-button>
       </div>
     </div>
-  `).join("");
+  `}).join("");
 
   document.querySelectorAll(".btn-edit-expert").forEach(btn => {
     btn.addEventListener("click", (e) => {
@@ -739,7 +875,7 @@ async function loadAndRenderExpertEntries() {
       const cmd = (e.target as HTMLElement).getAttribute("data-cmd");
       if (cmd) {
         await invoke("delete_entry", { namespace: "expert", key: cmd });
-        showToast("条目已删除");
+        showToast(t("delete_entry_success") || "条目已删除");
         loadAndRenderExpertEntries();
       }
     });
@@ -762,36 +898,36 @@ function setupExpertSettingsUI() {
     document.getElementById("expert-entry-form")?.classList.remove("active");
   });
 
-  document.getElementById("btn-save-expert")?.addEventListener("click", async () => {
-    const cmd = (document.getElementById("expert-cmd") as HTMLInputElement).value.trim();
-    const title = (document.getElementById("expert-title") as HTMLInputElement).value.trim();
-    const kind = (document.getElementById("expert-kind") as HTMLSelectElement).value;
-    const url = (document.getElementById("expert-url") as HTMLInputElement).value.trim();
-    const path = (document.getElementById("expert-path") as HTMLInputElement).value.trim();
+      document.getElementById("btn-save-expert")?.addEventListener("click", async () => {
+        const cmd = (document.getElementById("expert-cmd") as HTMLInputElement).value.trim();
+        const title = (document.getElementById("expert-title") as HTMLInputElement).value.trim();
+        const kind = (document.getElementById("expert-kind") as HTMLSelectElement).value;
+        const url = (document.getElementById("expert-url") as HTMLInputElement).value.trim();
+        const path = (document.getElementById("expert-path") as HTMLInputElement).value.trim();
 
-    if (!cmd || !title) {
-      showToast("关键字和显示名称不能为空", true);
-      return;
-    }
+        if (!cmd || !title) {
+          showToast(t("empty_keyword"), true);
+          return;
+        }
 
-    const entry: Entry = { command: cmd, title, kind };
-    if (kind === "website") {
-      if (!url) { showToast("网站类型的 URL 不能为空", true); return; }
-      entry.url = url;
-    } else if (kind === "app") {
-      if (!path) { showToast("应用类型的路径不能为空", true); return; }
-      entry.path = path;
-    }
+        const entry: Entry = { command: cmd, title, kind };
+        if (kind === "website") {
+          if (!url) { showToast(t("empty_url"), true); return; }
+          entry.url = url;
+        } else if (kind === "app") {
+          if (!path) { showToast(t("empty_path"), true); return; }
+          entry.path = path;
+        }
 
-    try {
-      await invoke("save_entry", { namespace: "expert", entry });
-      showToast("保存成功");
-      document.getElementById("expert-entry-form")?.classList.remove("active");
-      loadAndRenderExpertEntries();
-    } catch (e) {
-      showToast(String(e), true);
-    }
-  });
+        try {
+          await invoke("save_entry", { namespace: "expert", entry });
+          showToast(t("save_success"));
+          document.getElementById("expert-entry-form")?.classList.remove("active");
+          loadAndRenderExpertEntries();
+        } catch (e) {
+          showToast(String(e), true);
+        }
+      });
 }
 
 function updateSelection() {
@@ -801,7 +937,13 @@ function updateSelection() {
 }
 
 document.addEventListener("click", (e) => {
-  if (!container.contains(e.target as Node) && !configWindow?.contains(e.target as Node)) {
+  const target = e.target as Node;
+  // 如果点击的目标元素在事件冒泡过程中被移除了（例如点击格子后重新渲染），则不触发隐藏
+  if (!document.contains(target)) {
+    return;
+  }
+  
+  if (!container.contains(target) && !configWindow?.contains(target) && !welcomeWindow?.contains(target)) {
     invoke("hide_window");
   }
 });
@@ -829,19 +971,25 @@ document.getElementById("lang-select")?.addEventListener("change", async (e) => 
   setLanguage(lang);
   await invoke("save_config", { key: "global/language", value: lang });
   await updateTrayMenu();
-  // refresh UI text if needed
+  updateI18nUI();
+  const welcomeLangSelect = document.getElementById("welcome-lang-select") as HTMLSelectElement;
+  if (welcomeLangSelect) welcomeLangSelect.value = lang;
+});
+
+document.getElementById("welcome-lang-select")?.addEventListener("change", async (e) => {
+  const lang = (e.target as HTMLSelectElement).value;
+  setLanguage(lang);
+  await invoke("save_config", { key: "global/language", value: lang });
+  await updateTrayMenu();
+  updateI18nUI();
+  const langSelect = document.getElementById("lang-select") as HTMLSelectElement;
+  if (langSelect) langSelect.value = lang;
 });
 
 document.getElementById("theme-select")?.addEventListener("change", async (e) => {
   const theme = (e.target as HTMLSelectElement).value;
   await invoke("save_config", { key: "global/theme", value: theme });
-  if (theme === "dark") {
-    document.body.dataset.theme = "dark";
-  } else if (theme === "light") {
-    document.body.dataset.theme = "light";
-  } else {
-    delete document.body.dataset.theme;
-  }
+  applyTheme(theme);
 });
 
 document.getElementById("mode-select")?.addEventListener("change", async (e) => {
@@ -872,11 +1020,12 @@ async function init() {
   await loadConfig();
   await loadEntries();
   await initSettingsUI();
+  
+  updateI18nUI();
 
   const hasLaunched = await invoke<boolean>("get_has_launched").catch(() => false);
   if (!hasLaunched) {
-    showConfigWindow("about-content");
-    await invoke("mark_launched");
+    showWelcomeWindow();
   } else {
     if (currentMode === "simple") {
       collapsed = false;
@@ -894,6 +1043,9 @@ async function initSettingsUI() {
     const langSelect = document.getElementById("lang-select") as HTMLSelectElement;
     if (langSelect) langSelect.value = config.language || "zh";
     
+    const welcomeLangSelect = document.getElementById("welcome-lang-select") as HTMLSelectElement;
+    if (welcomeLangSelect) welcomeLangSelect.value = config.language || "zh";
+
     const themeSelect = document.getElementById("theme-select") as HTMLSelectElement;
     if (themeSelect) themeSelect.value = config.theme || "system";
     
@@ -910,6 +1062,52 @@ async function initSettingsUI() {
           const browserId = (e.target as HTMLSelectElement).value;
           await invoke("save_config", { key: "global/default_browser", value: browserId });
           showToast(t("browser_updated"));
+        });
+      }
+
+      const btnSelectBrowserPath = document.getElementById("btn-select-browser-path");
+      const btnAddCustomBrowser = document.getElementById("btn-add-custom-browser");
+      const customBrowserName = document.getElementById("custom-browser-name") as HTMLInputElement;
+      const customBrowserPath = document.getElementById("custom-browser-path") as HTMLInputElement;
+
+      if (btnSelectBrowserPath && btnAddCustomBrowser && customBrowserName && customBrowserPath) {
+        btnSelectBrowserPath.addEventListener("click", async () => {
+          const { open } = await import("@tauri-apps/plugin-dialog");
+          const selected = await open({
+            multiple: false,
+            filters: [{ name: "Executable", extensions: ["exe"] }]
+          });
+          if (selected && typeof selected === "string") {
+            customBrowserPath.value = selected;
+            if (!customBrowserName.value) {
+              const fileName = selected.split('\\').pop()?.split('/').pop() || "";
+              customBrowserName.value = fileName.replace(".exe", "");
+            }
+          }
+        });
+
+        btnAddCustomBrowser.addEventListener("click", async () => {
+          const name = customBrowserName.value.trim();
+          const path = customBrowserPath.value.trim();
+          if (!name || !path) {
+            showToast(t("empty_browser"), true);
+            return;
+          }
+          try {
+            await invoke("add_custom_browser", { name, path });
+            showToast(t("add_browser_success"));
+            customBrowserName.value = "";
+            customBrowserPath.value = "";
+            // Refresh browser list
+            if (browserSelect) {
+              const browsers = await invoke<BrowserInfo[]>("list_browsers");
+              browserSelect.innerHTML = `<fluent-option value="">${t("system")}</fluent-option>` + browsers.map(b => `<fluent-option value="${b.id}">${b.name}</fluent-option>`).join("");
+              browserSelect.value = browsers[browsers.length - 1].id;
+              await invoke("save_config", { key: "global/default_browser", value: browserSelect.value });
+            }
+          } catch (e) {
+            showToast(String(e), true);
+          }
         });
       }
       
@@ -938,12 +1136,12 @@ async function initSettingsUI() {
             const content = event.target?.result as string;
             try {
               await invoke("import_config", { json: content });
-              showToast("配置导入成功，即将重启...");
+              showToast(t("import_restarting"));
               setTimeout(() => {
                 location.reload();
               }, 1500);
             } catch (err) {
-              showToast("导入失败: " + String(err), true);
+              showToast(t("import_failed") + ": " + String(err), true);
             }
           };
           reader.readAsText(file);
@@ -968,9 +1166,16 @@ async function initSettingsUI() {
           if (mods.length === 0) return;
           
           const shortcutStr = [...mods, key.toUpperCase()].join("+");
-          hotkeyInput.value = shortcutStr;
           
           try {
+            const isConflict = await invoke<boolean>("check_hotkey_conflict", { modifiers: mods, key });
+            if (isConflict) {
+              showToast(t("hotkey_conflict"), true);
+              hotkeyInput.value = config.shortcut || "Alt+Space";
+              return;
+            }
+            
+            hotkeyInput.value = shortcutStr;
             await invoke("register_hotkey", { modifiers: mods, key });
             await invoke("save_config", { key: "global/shortcut", value: shortcutStr });
           } catch (err) {
@@ -1001,7 +1206,7 @@ async function initSettingsUI() {
               configWindow.style.backgroundImage = `url(${base64})`;
               configWindow.style.backgroundColor = "transparent";
             }
-            showToast("背景图片已更新");
+            showToast(t("bg_updated"));
           };
           reader.readAsDataURL(file);
         });
@@ -1017,7 +1222,7 @@ async function initSettingsUI() {
           if (bgUploadInput) {
             bgUploadInput.value = "";
           }
-          showToast("背景图片已清除");
+          showToast(t("bg_cleared"));
         });
       }
 
@@ -1062,6 +1267,117 @@ async function initSettingsUI() {
 
       setupSimpleSettingsUI();
       setupExpertSettingsUI();
+
+      let currentWelcomeSlide = 1;
+      const totalWelcomeSlides = 6;
+      
+      const updateWelcomeSlides = () => {
+        document.querySelectorAll(".welcome-slide").forEach(slide => {
+          slide.classList.remove("active");
+        });
+        document.getElementById(`slide-${currentWelcomeSlide}`)?.classList.add("active");
+        
+        document.querySelectorAll(".welcome-dots .dot").forEach((dot, index) => {
+          dot.classList.toggle("active", index === currentWelcomeSlide - 1);
+        });
+        
+        const btnPrev = document.getElementById("btn-welcome-prev") as any;
+        const btnNext = document.getElementById("btn-welcome-next") as any;
+        
+        if (btnPrev) btnPrev.disabled = currentWelcomeSlide === 1;
+        if (btnNext) {
+          if (currentWelcomeSlide === totalWelcomeSlides) {
+            btnNext.style.display = "none";
+          } else {
+            btnNext.style.display = "inline-flex";
+          }
+        }
+      };
+
+      document.getElementById("btn-welcome-prev")?.addEventListener("click", () => {
+        if (currentWelcomeSlide > 1) {
+          currentWelcomeSlide--;
+          updateWelcomeSlides();
+        }
+      });
+
+      document.getElementById("btn-welcome-next")?.addEventListener("click", () => {
+        if (currentWelcomeSlide < totalWelcomeSlides) {
+          currentWelcomeSlide++;
+          updateWelcomeSlides();
+        }
+      });
+
+      // Initialize welcome radio states
+      const modeGroup = document.getElementById("welcome-mode-group") as any;
+      if (modeGroup) {
+        modeGroup.value = config.mode;
+        modeGroup.addEventListener("change", async (e: any) => {
+          const mode = e.target.value;
+          if (mode) {
+            await invoke("set_mode", { mode });
+            currentMode = mode as "expert" | "simple";
+            await loadEntries();
+            const modeSelect = document.getElementById("mode-select") as HTMLSelectElement;
+            if (modeSelect) modeSelect.value = mode;
+            showToast(`${t("mode_selected")}${t(mode === "simple" ? "simple_mode" : "expert_mode")}`);
+          }
+        });
+      }
+
+      document.querySelectorAll(".btn-welcome-theme").forEach(btn => {
+        if (btn.getAttribute("data-theme") === (config.theme || "system")) {
+          btn.setAttribute("appearance", "accent");
+        } else {
+          btn.removeAttribute("appearance");
+        }
+      });
+
+
+
+      document.querySelectorAll(".btn-welcome-theme").forEach(btn => {
+        btn.addEventListener("click", async (e) => {
+          const theme = (e.currentTarget as HTMLElement).getAttribute("data-theme");
+          if (theme) {
+            await invoke("save_config", { key: "global/theme", value: theme });
+            applyTheme(theme);
+            const themeSelect = document.getElementById("theme-select") as HTMLSelectElement;
+            if (themeSelect) themeSelect.value = theme;
+            
+            showToast(`${t("mode_selected")}${t(theme === "light" ? "light_mode" : theme === "dark" ? "dark_mode" : "system")}`);
+
+            document.querySelectorAll(".btn-welcome-theme").forEach(b => b.removeAttribute("appearance"));
+            (e.currentTarget as HTMLElement).setAttribute("appearance", "accent");
+          }
+        });
+      });
+
+      const btnFinishWelcome = document.getElementById("btn-finish-welcome");
+      if (btnFinishWelcome) {
+        btnFinishWelcome.addEventListener("click", async () => {
+          await invoke("mark_launched");
+          hideWelcomeWindow();
+          if (currentMode === "simple") {
+            collapsed = false;
+            renderResults([]);
+          } else {
+            setCollapsed(true);
+            renderResults([]);
+          }
+          showToast(t("press_alt_space"));
+        });
+      }
+
+      const btnClearLaunched = document.getElementById("btn-clear-launched");
+      if (btnClearLaunched) {
+        btnClearLaunched.addEventListener("click", async () => {
+          await invoke("unmark_launched");
+          showToast(t("clear_launched_success"));
+          setTimeout(() => {
+            location.reload();
+          }, 1500);
+        });
+      }
   } catch (e) {
     console.error("Failed to init settings UI:", e);
   }

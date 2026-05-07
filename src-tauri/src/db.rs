@@ -42,9 +42,9 @@ impl Database {
     }
 
     pub fn get_entries(&self, namespace: &str) -> Result<Vec<Entry>, AppError> {
-        let mut stmt = self.conn.prepare(
-            "SELECT command, kind, title, url, path FROM entries WHERE namespace = ?1",
-        )?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT command, kind, title, url, path FROM entries WHERE namespace = ?1")?;
         let entries = stmt
             .query_map([namespace], |row| {
                 Ok(Entry {
@@ -84,7 +84,9 @@ impl Database {
     }
 
     pub fn get_config(&self, key: &str) -> Result<Option<String>, AppError> {
-        let mut stmt = self.conn.prepare("SELECT value FROM config WHERE key = ?1")?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT value FROM config WHERE key = ?1")?;
         let result = stmt.query_row([key], |row| row.get(0)).ok();
         Ok(result)
     }
@@ -106,7 +108,8 @@ impl Database {
     }
 
     pub fn clear_namespace(&mut self, namespace: &str) -> Result<(), AppError> {
-        self.conn.execute("DELETE FROM entries WHERE namespace = ?1", [namespace])?;
+        self.conn
+            .execute("DELETE FROM entries WHERE namespace = ?1", [namespace])?;
         Ok(())
     }
 }
@@ -116,8 +119,10 @@ impl Clone for Database {
         Self {
             conn: Connection::open_with_flags(
                 self.conn.path().unwrap(),
-                rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE | rusqlite::OpenFlags::SQLITE_OPEN_CREATE,
-            ).expect("Failed to reopen database"),
+                rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE
+                    | rusqlite::OpenFlags::SQLITE_OPEN_CREATE,
+            )
+            .expect("Failed to reopen database"),
         }
     }
 }
