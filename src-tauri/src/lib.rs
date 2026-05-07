@@ -259,7 +259,6 @@ fn parse_shortcut(shortcut_str: &str) -> Result<Shortcut, String> {
 fn setup_global_shortcut(app: &AppHandle, state: State<'_, AppState>) {
     let handle = app.clone();
 
-    // Read shortcut from config / 从配置读取快捷键
     let shortcut_str = {
         let config = state.config.lock();
         config
@@ -267,7 +266,6 @@ fn setup_global_shortcut(app: &AppHandle, state: State<'_, AppState>) {
             .unwrap_or_else(|_| "Alt+Space".to_string())
     };
 
-    // Parse shortcut, fallback to Alt+Space on failure / 解析失败则回退到 Alt+Space
     let new_shortcut = match parse_shortcut(&shortcut_str) {
         Ok(s) => s,
         Err(e) => {
@@ -279,34 +277,29 @@ fn setup_global_shortcut(app: &AppHandle, state: State<'_, AppState>) {
         }
     };
 
-    // Try to register, unregister old if needed / 尝试注册，必要时注销旧的
     let current_hotkey = state.current_hotkey.clone();
-    if let Err(e) = register_hotkey_logic(&app.clone(), new_shortcut.clone(), &current_hotkey)
-    {
-        error!(
-            "Failed to register saved shortcut: {}, falling back to Alt+Space",
-            e
-        );
-        let fallback = Shortcut::new(Some(Modifiers::ALT), Code::Space);
-        let _ = register_hotkey_logic(&app.clone(), fallback.clone(), &current_hotkey);
-        // Don't add callback here - fallback path handles its own callback via on_shortcut in register_hotkey
-        // 不在此处添加 callback - fallback 路径通过 register_hotkey 中的 on_shortcut 处理
-        return;
-    }
-
-    // Register callback for shortcut trigger only if no previous hotkey was registered
-    // 仅在没有之前的快捷键时才添加 callback
-    // This prevents duplicate callbacks when register_hotkey is called later
-    // 这可以防止后续调用 register_hotkey 时重复添加 callback
-    {
-        let hotkey_state = state.current_hotkey.lock();
-        if hotkey_state.is_none() {
-            let _ = app.global_shortcut().on_shortcut(new_shortcut, move |_app, _shortcut, event| {
-                if event.state == ShortcutState::Released {
-                    toggle_window_visibility(&handle);
-                }
-            });
+    let registered_shortcut = match register_hotkey_logic(&app.clone(), new_shortcut.clone(), &current_hotkey) {
+        Ok(_) => Some(new_shortcut),
+        Err(e) => {
+            error!(
+                "Failed to register saved shortcut: {}, falling back to Alt+Space",
+                e
+            );
+            let fallback = Shortcut::new(Some(Modifiers::ALT), Code::Space);
+            match register_hotkey_logic(&app.clone(), fallback.clone(), &current_hotkey) {
+                Ok(_) => Some(fallback),
+                Err(_) => None,
+            }
         }
+    };
+
+    if let Some(shortcut) = registered_shortcut {
+        let cb_handle = handle.clone();
+        let _ = app.global_shortcut().on_shortcut(shortcut, move |_app, _shortcut, event| {
+            if event.state == ShortcutState::Released {
+                toggle_window_visibility(&cb_handle);
+            }
+        });
     }
 }
 
