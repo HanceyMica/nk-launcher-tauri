@@ -92,6 +92,35 @@ body {
   flex-direction: column;
   width: 100vw;
   height: 100vh;
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+}
+
+[data-simple-bg="true"] #container {
+  background: none;
+  background-size: cover;
+  background-position: center;
+}
+
+[data-simple-bg="true"] #container::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(var(--bg-primary-rgb), var(--bg-opacity));
+  backdrop-filter: blur(var(--bg-blur));
+  -webkit-backdrop-filter: blur(var(--bg-blur));
+  z-index: 0;
+  border-radius: 8px;
+}
+
+[data-simple-bg="true"] #search-wrapper,
+[data-simple-bg="true"] #result-list {
+  position: relative;
+  z-index: 1;
 }
 
 /* ============================================================================
@@ -829,12 +858,14 @@ body {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: var(--border-color);
-  transition: background 0.2s;
+  background: var(--text-secondary);
+  opacity: 0.4;
+  transition: background 0.2s, opacity 0.2s;
 }
 
 .welcome-dots .dot.active {
   background: var(--accent-color);
+  opacity: 1;
 }
 
 /* Navigation buttons / 导航按钮 */

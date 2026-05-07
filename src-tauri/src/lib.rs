@@ -35,6 +35,7 @@ pub struct AppState {
     pub db: Arc<Mutex<db::Database>>,
     pub config: Arc<Mutex<config::ConfigManager>>,
     pub current_hotkey: Arc<Mutex<Option<Shortcut>>>,
+    pub window_visible: Arc<Mutex<bool>>,
 }
 
 // ============================================================================
@@ -193,14 +194,18 @@ fn update_window_position(window: &WebviewWindow) -> Result<(), AppError> {
 /// # Side Effects
 /// - Shows/hides window / 显示/隐藏窗口
 fn toggle_window_visibility(app: &AppHandle) {
+    let state = app.state::<AppState>();
+    let mut visible = state.window_visible.lock();
+
     if let Some(window) = app.get_webview_window("main") {
-        let is_visible = window.is_visible().unwrap_or(false);
-        if is_visible {
+        if *visible {
             let _ = window.hide();
+            *visible = false;
         } else {
             let _ = window.show();
             let _ = window.set_focus();
             let _ = update_window_position(&window);
+            *visible = true;
         }
     }
 }
@@ -266,40 +271,24 @@ fn setup_global_shortcut(app: &AppHandle, state: State<'_, AppState>) {
             .unwrap_or_else(|_| "Alt+Space".to_string())
     };
 
-    let new_shortcut = match parse_shortcut(&shortcut_str) {
-        Ok(s) => s,
-        Err(e) => {
-            error!(
-                "Failed to parse saved shortcut: {}, falling back to Alt+Space",
-                e
-            );
-            Shortcut::new(Some(Modifiers::ALT), Code::Space)
-        }
-    };
+    let shortcut = parse_shortcut(&shortcut_str).unwrap_or_else(|e| {
+        error!("Failed to parse shortcut '{}': {}, falling back", shortcut_str, e);
+        Shortcut::new(Some(Modifiers::ALT), Code::Space)
+    });
 
-    let current_hotkey = state.current_hotkey.clone();
-    let registered_shortcut = match register_hotkey_logic(&app.clone(), new_shortcut.clone(), &current_hotkey) {
-        Ok(_) => Some(new_shortcut),
-        Err(e) => {
-            error!(
-                "Failed to register saved shortcut: {}, falling back to Alt+Space",
-                e
-            );
-            let fallback = Shortcut::new(Some(Modifiers::ALT), Code::Space);
-            match register_hotkey_logic(&app.clone(), fallback.clone(), &current_hotkey) {
-                Ok(_) => Some(fallback),
-                Err(_) => None,
-            }
+    match app.global_shortcut().on_shortcut(shortcut, move |_app, _sc, event| {
+        if event.state == ShortcutState::Pressed {
+            toggle_window_visibility(&handle);
         }
-    };
-
-    if let Some(shortcut) = registered_shortcut {
-        let cb_handle = handle.clone();
-        let _ = app.global_shortcut().on_shortcut(shortcut, move |_app, _shortcut, event| {
-            if event.state == ShortcutState::Pressed {
-                toggle_window_visibility(&cb_handle);
-            }
-        });
+    }) {
+        Ok(_) => {
+            info!("Global shortcut registered: {}", shortcut_str);
+            *state.current_hotkey.lock() = Some(shortcut);
+        }
+        Err(e) => {
+            error!("Failed to register global shortcut '{}': {}", shortcut_str, e);
+            let _ = app.emit("hotkey-register-failed", shortcut_str.clone());
+        }
     }
 }
 
@@ -763,20 +752,32 @@ async fn register_hotkey(
         code,
     );
 
-    // Register using core logic / 使用核心逻辑注册
-    register_hotkey_logic(&app, new_shortcut.clone(), &state.current_hotkey)?;
+    // Unregister old shortcut / 注销旧快捷键
+    {
+        let mut current = state.current_hotkey.lock();
+        if let Some(old) = current.take() {
+            let _ = app.global_shortcut().unregister(old);
+        }
+    }
 
-    // Setup callback for this shortcut / 为这个快捷键设置回调
+    // Register new shortcut and bind callback / 注册新快捷键并绑定回调
     let handle = app.clone();
-    let _ = app
-        .global_shortcut()
+    app.global_shortcut()
         .on_shortcut(new_shortcut, move |_app, _shortcut, event| {
             if event.state == ShortcutState::Pressed {
                 toggle_window_visibility(&handle);
             }
-        });
+        })
+        .map_err(|e| e.to_string())?;
 
+    *state.current_hotkey.lock() = Some(new_shortcut);
     Ok(())
+}
+
+/// Get current hotkey registration status / 获取当前热键注册状态
+#[tauri::command]
+async fn get_hotkey_status(state: State<'_, AppState>) -> Result<bool, String> {
+    Ok(state.current_hotkey.lock().is_some())
 }
 
 /// Check if a shortcut would conflict with system or other apps
@@ -912,39 +913,33 @@ async fn hide_window(app: AppHandle) -> Result<(), String> {
 // ============================================================================
 
 /// Check if app has been launched before / 检查应用是否曾经启动过
-/// Used for first-run welcome wizard / 用于首次运行欢迎向导
+/// Reads a flag file in the data directory / 读取数据目录中的标记文件
 /// # Returns
 /// - true if launched before, false if first launch
-/// - 如果曾经启动过返回 true，首次启动返回 false
 #[tauri::command]
-async fn get_has_launched(state: State<'_, AppState>) -> Result<bool, String> {
-    let config = state.config.lock();
-    let val = config
-        .get("global/has_launched")
-        .map_err(|e| e.to_string())?;
-    Ok(val.as_bool().unwrap_or(false))
+async fn get_has_launched(app: AppHandle) -> Result<bool, String> {
+    let flag_path = get_data_dir(&app).join("launched.flag");
+    Ok(flag_path.exists())
 }
 
 /// Mark app as having been launched / 标记应用已经启动
+/// Creates a flag file in the data directory / 在数据目录中创建标记文件
 /// Called after first-run wizard completes / 在首次运行向导完成后调用
 #[tauri::command]
-async fn mark_launched(state: State<'_, AppState>) -> Result<(), String> {
-    let mut config = state.config.lock();
-    config
-        .set("global/has_launched", serde_json::json!(true))
-        .map_err(|e| e.to_string())?;
-    Ok(())
+async fn mark_launched(app: AppHandle) -> Result<(), String> {
+    let flag_path = get_data_dir(&app).join("launched.flag");
+    std::fs::write(&flag_path, b"").map_err(|e| e.to_string())
 }
 
 /// Clear launched state to show welcome wizard again
 /// 清除启动状态以再次显示欢迎向导
-/// Used for "restart welcome" feature / 用于"重新观看欢迎向导"功能
+/// Deletes the flag file / 删除标记文件
 #[tauri::command]
-async fn unmark_launched(state: State<'_, AppState>) -> Result<(), String> {
-    let mut config = state.config.lock();
-    config
-        .set("global/has_launched", serde_json::json!(false))
-        .map_err(|e| e.to_string())?;
+async fn unmark_launched(app: AppHandle) -> Result<(), String> {
+    let flag_path = get_data_dir(&app).join("launched.flag");
+    if flag_path.exists() {
+        std::fs::remove_file(&flag_path).map_err(|e| e.to_string())?;
+    }
     Ok(())
 }
 
@@ -1057,6 +1052,7 @@ pub fn run() {
                 db: Arc::new(Mutex::new(db)),
                 config: Arc::new(Mutex::new(config)),
                 current_hotkey: Arc::new(Mutex::new(None)),
+                window_visible: Arc::new(Mutex::new(true)),
             });
 
             // Setup system tray / 设置系统托盘
@@ -1090,6 +1086,7 @@ pub fn run() {
             open_app,
             register_hotkey,
             check_hotkey_conflict,
+            get_hotkey_status,
             export_config,
             import_config,
             show_window,

@@ -27,6 +27,13 @@ pub struct AppConfig {
     pub theme: String,
     pub language: String,
     pub default_browser: Option<String>,
+    pub shortcut: Option<String>,
+    pub bg_image: Option<String>,
+    pub bg_blur: Option<i64>,
+    pub bg_opacity: Option<i64>,
+    pub search_opacity: Option<i64>,
+    pub search_width: Option<f64>,
+    pub simple_bg_enabled: Option<bool>,
 }
 
 // ============================================================================
@@ -70,8 +77,8 @@ impl ConfigManager {
         if self.get_str("global/language").is_err() {
             self.set("global/language", serde_json::json!("zh"))?;
         }
-        if self.get_str("global/has_launched").is_err() {
-            self.set("global/has_launched", serde_json::json!(false))?;
+        if self.get_str("global/shortcut").is_err() {
+            self.set("global/shortcut", serde_json::json!("Alt+Space"))?;
         }
         Ok(())
     }
@@ -141,6 +148,13 @@ impl ConfigManager {
                 .get_str("global/language")
                 .unwrap_or_else(|_| "zh".to_string()),
             default_browser: self.get_str("global/default_browser").ok(),
+            shortcut: self.get_str("global/shortcut").ok(),
+            bg_image: self.get_str("global/bg_image").ok(),
+            bg_blur: self.get("global/bg_blur").ok().and_then(|v| v.as_i64()),
+            bg_opacity: self.get("global/bg_opacity").ok().and_then(|v| v.as_i64()),
+            search_opacity: self.get("global/search_opacity").ok().and_then(|v| v.as_i64()),
+            search_width: self.get("global/search_width").ok().and_then(|v| v.as_f64()),
+            simple_bg_enabled: self.get("global/simple_bg_enabled").ok().and_then(|v| v.as_bool()),
         })
     }
 

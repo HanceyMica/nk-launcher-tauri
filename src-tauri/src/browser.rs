@@ -224,26 +224,6 @@ pub fn open_url_with_browser(url: &str, exe_path: &str) -> Result<(), AppError> 
     Ok(())
 }
 
-/// Construct browser executable path and arguments / 构建浏览器可执行文件路径和参数
-/// Used for testing / 用于测试
-/// # Arguments
-/// - browser: BrowserInfo with exe_path / 带 exe_path 的 BrowserInfo
-/// - url: Target URL / 目标 URL
-/// # Returns
-/// - Result<(String, Vec<String>), AppError>: (exe_path, [url])
-pub fn construct_browser_args(
-    browser: &BrowserInfo,
-    url: &str,
-) -> Result<(String, Vec<String>), AppError> {
-    let exe_path = browser
-        .exe_path
-        .as_ref()
-        .ok_or_else(|| AppError::Browser("Browser not found".to_string()))?
-        .clone();
-
-    Ok((exe_path, vec![url.to_string()]))
-}
-
 // ============================================================================
 // Tests / 测试
 // ============================================================================
@@ -281,27 +261,6 @@ mod tests {
         );
         assert_eq!(browsers[1].id, "firefox");
         assert!(browsers[1].exe_path.is_none());
-    }
-
-    /// Test browser args construction / 测试浏览器参数构建
-    #[test]
-    fn test_construct_browser_args() {
-        let browser = BrowserInfo {
-            id: "chrome".to_string(),
-            name: "Chrome".to_string(),
-            exe_path: Some("C:\\chrome.exe".to_string()),
-        };
-        let (exe, args) = construct_browser_args(&browser, "https://example.com").unwrap();
-        assert_eq!(exe, "C:\\chrome.exe");
-        assert_eq!(args[0], "https://example.com");
-
-        // Error case: no exe_path / 错误情况：无 exe_path
-        let bad_browser = BrowserInfo {
-            id: "firefox".to_string(),
-            name: "Firefox".to_string(),
-            exe_path: None,
-        };
-        assert!(construct_browser_args(&bad_browser, "https://example.com").is_err());
     }
 }
 

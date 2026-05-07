@@ -38,6 +38,7 @@ const translations: Record<string, TranslationDict> = {
     search_placeholder: "输入搜索...",
     no_results: "无结果",
     mode_switch: "切换模式",
+    mode: "模式",
     hotkey: "快捷键",
     theme: "主题",
     language: "语言",
@@ -52,7 +53,7 @@ const translations: Record<string, TranslationDict> = {
     browser_updated: "默认浏览器已更新",
     import_success: "导入成功",
     export_success: "导出成功",
-    hotkey_conflict: "快捷键冲突",
+    hotkey_conflict: "快捷键冲突，已被其他程序占用",
     save_entry: "保存条目",
     delete_entry: "删除条目",
     add_entry: "添加条目",
@@ -111,6 +112,8 @@ const translations: Record<string, TranslationDict> = {
     all_set: "所有设置完毕！",
     all_set_desc: "配置完毕后，按下 Alt+Space 即可随时唤醒主窗口。",
     close_and_start: "关闭并开始使用",
+    simple_bg_enabled: "简单模式下应用设置背景",
+    hotkey_updated: "快捷键已更新",
     prev_step: "上一步",
     next_step: "下一步",
     placeholder_desc: "图片/视频位占位说明",
@@ -148,6 +151,7 @@ const translations: Record<string, TranslationDict> = {
     search_placeholder: "Search...",
     no_results: "No results",
     mode_switch: "Switch Mode",
+    mode: "Mode",
     hotkey: "Hotkey",
     theme: "Theme",
     language: "Language",
@@ -162,7 +166,7 @@ const translations: Record<string, TranslationDict> = {
     browser_updated: "Default browser updated",
     import_success: "Import successful",
     export_success: "Export successful",
-    hotkey_conflict: "Hotkey conflict",
+    hotkey_conflict: "Hotkey conflict, already used by another program",
     save_entry: "Save Entry",
     delete_entry: "Delete Entry",
     add_entry: "Add Entry",
@@ -221,6 +225,8 @@ const translations: Record<string, TranslationDict> = {
     all_set: "All set!",
     all_set_desc: "Press Alt+Space to activate the main window anytime.",
     close_and_start: "Close and Start",
+    simple_bg_enabled: "Apply settings background in simple mode",
+    hotkey_updated: "Hotkey updated",
     prev_step: "Previous",
     next_step: "Next",
     placeholder_desc: "[Image/Video Placeholder]",
@@ -258,6 +264,7 @@ const translations: Record<string, TranslationDict> = {
     search_placeholder: "検索...",
     no_results: "結果なし",
     mode_switch: "モード切替",
+    mode: "モード",
     hotkey: "ホットキー",
     theme: "テーマ",
     language: "言語",
@@ -272,7 +279,7 @@ const translations: Record<string, TranslationDict> = {
     browser_updated: "デフォルトブラウザを更新しました",
     import_success: "インポート成功",
     export_success: "エクスポート成功",
-    hotkey_conflict: "ホットキー競合",
+    hotkey_conflict: "ショートカットキーが競合しています。他のプログラムが使用中です",
     save_entry: "エントリを保存",
     delete_entry: "エントリを削除",
     add_entry: "エントリを追加",
@@ -331,6 +338,8 @@ const translations: Record<string, TranslationDict> = {
     all_set: "設定完了！",
     all_set_desc: "Alt+Space を押すことでいつでもメインウィンドウを起動できます。",
     close_and_start: "閉じて開始",
+    simple_bg_enabled: "シンプルモードで設定背景を適用",
+    hotkey_updated: "ショートカットキーが更新されました",
     prev_step: "戻る",
     next_step: "次へ",
     placeholder_desc: "[画像/動画プレースホルダー]",
@@ -377,10 +386,9 @@ let currentLang = "zh";
  */
 export async function initI18n() {
   try {
-    const config = await import("@tauri-apps/api/core").then(m => m.invoke<string>("get_config").catch(() => null));
+    const config = await import("@tauri-apps/api/core").then(m => m.invoke<{ language: string }>("get_config").catch(() => null));
     if (config) {
-      const parsed = JSON.parse(config);
-      currentLang = parsed.language || "zh";
+      currentLang = (config as any).language || "zh";
     }
   } catch {
     currentLang = "zh";

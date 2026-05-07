@@ -30,6 +30,7 @@ import {
   fluentButton,
   fluentRadio,
   fluentRadioGroup,
+  fluentCheckbox,
   baseLayerLuminance,
   StandardLuminance
 } from "@fluentui/web-components";
@@ -41,7 +42,8 @@ provideFluentDesignSystem().register(
   fluentTextField(),
   fluentButton(),
   fluentRadio(),
-  fluentRadioGroup()
+  fluentRadioGroup(),
+  fluentCheckbox()
 );
 
 // ============================================================================
@@ -92,6 +94,7 @@ export interface AppConfig {
   bg_opacity?: number;
   search_opacity?: number;
   search_width?: number;
+  simple_bg_enabled?: boolean;
 }
 
 /**
@@ -379,11 +382,24 @@ async function loadConfig() {
         configWindow.style.backgroundImage = `url(${config.bg_image})`;
         configWindow.style.backgroundColor = "transparent";
       }
+      if (config.simple_bg_enabled === true && container) {
+        container.style.backgroundImage = `url(${config.bg_image})`;
+      }
     } else {
       if (configWindow) {
         configWindow.style.backgroundImage = "none";
         configWindow.style.backgroundColor = "";
       }
+      if (container) {
+        container.style.backgroundImage = "none";
+      }
+    }
+
+    // Apply simple bg toggle / 应用简单模式背景开关
+    if (config.simple_bg_enabled === true) {
+      document.body.dataset.simpleBg = "true";
+    } else {
+      delete document.body.dataset.simpleBg;
     }
 
     // Apply blur, opacity, search width settings
@@ -610,7 +626,7 @@ searchInput?.addEventListener("keydown", async (e) => {
  */
 function renderCommandSuggestions() {
   const commands = [
-    { cmd: "s", label: t("setting"), icon: `<i class="fa-solid fa-cog"></i>`, action: () => showConfigWindow("settings-content") },
+    { cmd: "s", label: t("setting"), icon: `<i class="fa-solid fa-cog"></i>`, action: () => showConfigWindow("basic-settings") },
     { cmd: "d", label: t("dark"), icon: `<i class="fa-solid fa-moon"></i>`, action: async () => { await invoke("save_config", { key: "global/theme", value: "dark" }); applyTheme("dark"); } },
     { cmd: "l", label: t("light"), icon: `<i class="fa-solid fa-sun"></i>`, action: async () => { await invoke("save_config", { key: "global/theme", value: "light" }); applyTheme("light"); } },
     { cmd: "w", label: t("system"), icon: `<i class="fa-solid fa-desktop"></i>`, action: async () => { await invoke("save_config", { key: "global/theme", value: "system" }); applyTheme("system"); } },
@@ -619,7 +635,7 @@ function renderCommandSuggestions() {
       if (configImportInput) configImportInput.click();
     } },
     { cmd: "o", label: t("export"), icon: `<i class="fa-solid fa-file-export"></i>`, action: async () => { const json = await invoke<string>("export_config"); downloadJson(json); } },
-    { cmd: "a", label: t("about"), icon: `<i class="fa-solid fa-info-circle"></i>`, action: () => showConfigWindow("about-content") },
+    { cmd: "a", label: t("about"), icon: `<i class="fa-solid fa-info-circle"></i>`, action: () => showConfigWindow("about-settings") },
   ];
 
   // Filter commands by query / 根据查询过滤命令
@@ -661,7 +677,7 @@ function renderCommandSuggestions() {
  */
 async function executeCommand(cmd: string) {
   const commands: Record<string, () => Promise<void>> = {
-    s: () => { showConfigWindow("settings-content"); return Promise.resolve(); },
+    s: () => { showConfigWindow("basic-settings"); return Promise.resolve(); },
     d: async () => { await invoke("save_config", { key: "global/theme", value: "dark" }); applyTheme("dark"); },
     l: async () => { await invoke("save_config", { key: "global/theme", value: "light" }); applyTheme("light"); },
     w: async () => { await invoke("save_config", { key: "global/theme", value: "system" }); applyTheme("system"); },
@@ -671,7 +687,7 @@ async function executeCommand(cmd: string) {
       return Promise.resolve();
     },
     o: async () => { const json = await invoke<string>("export_config"); downloadJson(json); },
-    a: () => { showConfigWindow("about-content"); return Promise.resolve(); },
+    a: () => { showConfigWindow("about-settings"); return Promise.resolve(); },
   };
 
   if (commands[cmd]) {
@@ -884,8 +900,8 @@ function renderSimpleGrid(prefix: string = "") {
   });
 
   // Action button handlers / 操作按钮处理器
-  document.getElementById("btn-settings")?.addEventListener("click", () => showConfigWindow("settings-content"));
-  document.getElementById("btn-about")?.addEventListener("click", () => showConfigWindow("about-content"));
+  document.getElementById("btn-settings")?.addEventListener("click", () => showConfigWindow("basic-settings"));
+  document.getElementById("btn-about")?.addEventListener("click", () => showConfigWindow("about-settings"));
   document.getElementById("btn-theme")?.addEventListener("click", async () => {
     const themeSelect = document.getElementById("theme-select") as HTMLSelectElement;
     const currentTheme = themeSelect ? themeSelect.value : "system";
@@ -1354,7 +1370,13 @@ async function init() {
 
   // Listen for show-settings event from tray / 监听来自托盘的 show-settings 事件
   listen("show-settings", () => {
-    showConfigWindow("settings-content");
+    showConfigWindow("basic-settings");
+  });
+
+  // Listen for hotkey register failure / 监听热键注册失败事件
+  listen("hotkey-register-failed", (event: any) => {
+    const shortcut = event.payload || "Alt+Space";
+    showToast(`⚠ 全局快捷键 ${shortcut} 注册失败，可能被其他程序占用`, true);
   });
 
   // Set initial window size / 设置初始窗口大小
@@ -1510,8 +1532,17 @@ async function initSettingsUI() {
     const hotkeyInput = document.getElementById("hotkey-input") as HTMLInputElement;
     if (hotkeyInput) {
       hotkeyInput.value = config.shortcut || "Alt+Space";
-      hotkeyInput.addEventListener("keydown", async (e) => {
+
+      let hotkeyInputFocused = false;
+
+      hotkeyInput.addEventListener("focus", () => { hotkeyInputFocused = true; });
+      hotkeyInput.addEventListener("blur", () => { hotkeyInputFocused = false; });
+
+      document.addEventListener("keydown", async (e) => {
+        if (!hotkeyInputFocused) return;
         e.preventDefault();
+        e.stopPropagation();
+
         const mods: string[] = [];
         if (e.ctrlKey) mods.push("Ctrl");
         if (e.altKey) mods.push("Alt");
@@ -1530,16 +1561,15 @@ async function initSettingsUI() {
           const isConflict = await invoke<boolean>("check_hotkey_conflict", { modifiers: mods, key });
           if (isConflict) {
             showToast(t("hotkey_conflict"), true);
-            hotkeyInput.value = config.shortcut || "Alt+Space";
             return;
           }
 
           hotkeyInput.value = shortcutStr;
           await invoke("register_hotkey", { modifiers: mods, key });
           await invoke("save_config", { key: "global/shortcut", value: shortcutStr });
+          showToast(t("hotkey_updated"));
         } catch (err) {
           showToast(t("hotkey_conflict"), true);
-          hotkeyInput.value = config.shortcut || "Alt+Space";
         }
       });
     }
@@ -1566,6 +1596,9 @@ async function initSettingsUI() {
             configWindow.style.backgroundImage = `url(${base64})`;
             configWindow.style.backgroundColor = "transparent";
           }
+          if (document.body.dataset.simpleBg === "true" && container) {
+            container.style.backgroundImage = `url(${base64})`;
+          }
           showToast(t("bg_updated"));
         };
         reader.readAsDataURL(file);
@@ -1578,6 +1611,9 @@ async function initSettingsUI() {
         if (configWindow) {
           configWindow.style.backgroundImage = "none";
           configWindow.style.backgroundColor = "";
+        }
+        if (container) {
+          container.style.backgroundImage = "none";
         }
         if (bgUploadInput) {
           bgUploadInput.value = "";
@@ -1625,6 +1661,35 @@ async function initSettingsUI() {
       searchOpacitySlider.addEventListener("change", async (e) => {
         const val = parseInt((e.target as HTMLInputElement).value);
         await invoke("save_config", { key: "global/search_opacity", value: val });
+      });
+    }
+
+    // Simple mode background toggle / 简单模式背景开关
+    const simpleBgCheckbox = document.getElementById("simple-bg-checkbox") as any;
+    if (simpleBgCheckbox) {
+      const applySimpleBg = (enabled: boolean) => {
+        if (enabled) {
+          document.body.dataset.simpleBg = "true";
+          if (container && configWindow) {
+            const bg = configWindow.style.backgroundImage;
+            if (bg && bg !== "none") {
+              container.style.backgroundImage = bg;
+            }
+          }
+        } else {
+          delete document.body.dataset.simpleBg;
+          if (container) {
+            container.style.backgroundImage = "none";
+          }
+        }
+      };
+      simpleBgCheckbox.checked = config.simple_bg_enabled === true;
+      applySimpleBg(config.simple_bg_enabled === true);
+      simpleBgCheckbox.addEventListener("change", async (e: any) => {
+        const enabled = e.target.checked === true;
+        await invoke("save_config", { key: "global/simple_bg_enabled", value: enabled });
+        applySimpleBg(enabled);
+        showToast(t("save_success"));
       });
     }
 
