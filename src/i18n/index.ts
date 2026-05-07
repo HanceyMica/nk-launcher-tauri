@@ -1,7 +1,31 @@
+/**
+ * Internationalization (i18n) Module / 国际化 (i18n) 模块
+ * Provides multi-language support for UI strings / 为 UI 字符串提供多语言支持
+ * Supported languages: zh (Chinese), en (English), ja (Japanese)
+ * 支持的语言：zh（中文）、en（英语）、ja（日语）
+ * @module i18n
+ */
+
+// ============================================================================
+// Type Definitions / 类型定义
+// ============================================================================
+
+/**
+ * Translation dictionary type / 翻译字典类型
+ * Maps translation keys to translated strings / 将翻译键映射到翻译后的字符串
+ * @typedef {Record<string, string>} TranslationDict
+ */
 type TranslationDict = {
   [key: string]: string;
 };
 
+// ============================================================================
+// Translation Data / 翻译数据
+// ============================================================================
+
+/**
+ * All translations indexed by language code / 按语言代码索引的所有翻译
+ */
 const translations: Record<string, TranslationDict> = {
   zh: {
     setting: "设置",
@@ -328,15 +352,29 @@ const translations: Record<string, TranslationDict> = {
     import_failed: "インポート失敗",
     clear_grid_success: "グリッドをクリアしました",
     bg_updated: "背景画像を更新しました",
-    bg_cleared: "背景画像をクリアしました",
+    bg_cleared: "背景をクリアしました",
     clear_launched_success: "初期状態をクリアしました。再起動します...",
     import_restarting: "インポート成功。再起動します...",
     mode_selected: "選択："
   },
 };
 
+// ============================================================================
+// State / 状态
+// ============================================================================
+
+/** Currently active language code / 当前活跃的语言代码 */
 let currentLang = "zh";
 
+// ============================================================================
+// Initialization / 初始化
+// ============================================================================
+
+/**
+ * Initialize i18n system from backend config / 从后端配置初始化 i18n 系统
+ * Loads language preference from Tauri config / 从 Tauri 配置加载语言偏好
+ * Falls back to "zh" on error / 出错时回退到 "zh"
+ */
 export async function initI18n() {
   try {
     const config = await import("@tauri-apps/api/core").then(m => m.invoke<string>("get_config").catch(() => null));
@@ -349,16 +387,36 @@ export async function initI18n() {
   }
 }
 
+// ============================================================================
+// Translation Functions / 翻译函数
+// ============================================================================
+
+/**
+ * Set current language / 设置当前语言
+ * @param {string} lang - Language code (zh/en/ja) / 语言代码
+ * @description Does nothing if language not supported / 如果语言不支持则什么都不做
+ */
 export function setLanguage(lang: string) {
   if (translations[lang]) {
     currentLang = lang;
   }
 }
 
+/**
+ * Translate a key / 翻译一个键
+ * @param {string} key - Translation key / 翻译键
+ * @returns {string} - Translated string, falls back to Chinese if key not found in current language
+ * @description Returns the translation for the key in the current language.
+ * Falls back to Chinese (zh) if the key is not found in the current language.
+ */
 export function t(key: string): string {
-  return translations[currentLang]?.[key] || translations.zh[key] || key;
+  return translations[currentLang]?.[key] ?? translations['zh']?.[key] ?? key;
 }
 
+/**
+ * Get current language code / 获取当前语言代码
+ * @returns {string} - Current language code (zh/en/ja)
+ */
 export function getCurrentLanguage(): string {
   return currentLang;
 }

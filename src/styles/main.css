@@ -1,10 +1,23 @@
-* {
-  margin: 0;
-  padding: 0;
-  box-sizing: border-box;
-}
+/**
+ * nk-launcher Stylesheet / nk-launcher 样式表
+ * Fluent UI design system with dual-mode launcher UI (Expert/Simple)
+ * Fluent UI 设计系统，支持双模式启动器 UI（专家/简单模式）
+ *
+ * Design System:
+ * - Acrylic blur effects for window backgrounds
+ * - CSS custom properties for theming (light/dark/system)
+ * - Responsive layouts for both expert (search) and simple (9-grid) modes
+ */
 
-/* True Fluent UI feel adjustments */
+/* ============================================================================
+   CSS Custom Properties / CSS 自定义属性
+   ============================================================================ */
+
+/**
+ * Light theme variables (default)
+ * 亮色主题变量（默认）
+ * Using rgba for backdrop-filter compatibility / 使用 rgba 以支持 backdrop-filter
+ */
 :root {
   --bg-primary: rgba(255, 255, 255, 0.75);
   --bg-primary-rgb: 255, 255, 255;
@@ -22,6 +35,11 @@
   --search-opacity: 1;
 }
 
+/**
+ * Dark theme variables
+ * 暗色主题变量
+ * Inverted colors for dark mode / 暗色模式的反色
+ */
 [data-theme="dark"] {
   --bg-primary: rgba(32, 32, 32, 0.75);
   --bg-primary-rgb: 32, 32, 32;
@@ -34,6 +52,17 @@
   color-scheme: dark;
 }
 
+/* ============================================================================
+   Base Styles / 基础样式
+   ============================================================================ */
+
+/* Reset all elements / 重置所有元素 */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
 body {
   font-family: "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
   background: transparent;
@@ -42,13 +71,22 @@ body {
   user-select: none;
 }
 
+/* ============================================================================
+   Main Container / 主容器
+   ============================================================================ */
+
+/**
+ * Main launcher container with acrylic effect
+ * 带亚克力效果的主启动器容器
+ * Uses backdrop-filter for Windows 10/11 acrylic compatibility
+ */
 #container {
   background: rgba(var(--bg-primary-rgb), calc(0.75 * var(--search-opacity)));
   border: 1px solid var(--border-color);
   border-radius: 8px;
   overflow: hidden;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15);
-  backdrop-filter: blur(30px); /* Acrylic effect */
+  backdrop-filter: blur(30px); /* Acrylic effect / 亚克力效果 */
   -webkit-backdrop-filter: blur(30px);
   display: flex;
   flex-direction: column;
@@ -56,6 +94,11 @@ body {
   height: 100vh;
 }
 
+/* ============================================================================
+   Search Bar / 搜索栏
+   ============================================================================ */
+
+/* Search input wrapper / 搜索输入包装器 */
 #search-wrapper {
   display: flex;
   align-items: center;
@@ -64,6 +107,7 @@ body {
   background: transparent;
 }
 
+/* Drag handle for window movement / 用于窗口移动的拖动句柄 */
 #drag-handle {
   cursor: grab;
   padding: 0 8px 0 0;
@@ -72,7 +116,7 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  -webkit-app-region: drag;
+  -webkit-app-region: drag; /* Allow drag in this area / 在此区域允许拖动 */
   height: 100%;
 }
 
@@ -80,6 +124,7 @@ body {
   cursor: grabbing;
 }
 
+/* Main search input / 主搜索输入框 */
 #search-input {
   flex: 1;
   border: none;
@@ -95,6 +140,11 @@ body {
   color: var(--text-secondary);
 }
 
+/* ============================================================================
+   Results List / 结果列表
+   ============================================================================ */
+
+/* Results container below search bar / 搜索栏下方的结果容器 */
 #result-list {
   border-top: 1px solid var(--border-color);
   background: transparent;
@@ -105,6 +155,7 @@ body {
   min-height: 0;
 }
 
+/* Individual result item / 单个结果项 */
 .result-item {
   display: flex;
   align-items: center;
@@ -141,6 +192,7 @@ body {
   max-width: 200px;
 }
 
+/* Command mode hint bar / 命令模式提示栏 */
 .command-hint {
   color: var(--text-secondary);
   font-size: 12px;
@@ -148,7 +200,11 @@ body {
   background: var(--bg-secondary);
 }
 
-/* Simple Mode Grid */
+/* ============================================================================
+   Simple Mode 9-Grid / 简单模式九宫格
+   ============================================================================ */
+
+/* 3x3 grid layout for simple mode / 简单模式的 3x3 网格布局 */
 #nine-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
@@ -159,6 +215,7 @@ body {
   align-content: stretch;
 }
 
+/* Individual grid cell / 单个网格单元格 */
 .grid-item {
   position: relative;
   display: flex;
@@ -180,6 +237,7 @@ body {
   background: var(--bg-hover);
 }
 
+/* Grid cell number label (1-9) / 网格单元格数字标签 (1-9) */
 .grid-item .number {
   position: absolute;
   top: 4px;
@@ -188,6 +246,7 @@ body {
   color: var(--text-secondary);
 }
 
+/* Grid cell display name / 网格单元格显示名称 */
 .grid-item .name {
   font-size: 14px;
   overflow: hidden;
@@ -197,10 +256,12 @@ body {
   text-align: center;
 }
 
+/* Grid cell icon / 网格单元格图标 */
 .grid-item .icon {
   font-size: 24px;
 }
 
+/* Simple mode action buttons / 简单模式操作按钮 */
 #simple-actions {
   display: flex;
   gap: 8px;
@@ -210,7 +271,11 @@ body {
   margin-top: auto;
 }
 
-/* Settings Panel */
+/* ============================================================================
+   Settings Panel / 设置面板
+   ============================================================================ */
+
+/* Settings window overlay / 设置窗口覆盖层 */
 #config-window {
   position: absolute;
   top: 0;
@@ -228,6 +293,7 @@ body {
   background-repeat: no-repeat;
 }
 
+/* Blur backdrop for settings / 设置的模糊背景 */
 #config-window::before {
   content: "";
   position: absolute;
@@ -243,6 +309,7 @@ body {
   display: flex;
 }
 
+/* Settings titlebar / 设置标题栏 */
 .config-titlebar {
   height: 48px;
   background: rgba(var(--bg-primary-rgb), var(--bg-opacity));
@@ -302,6 +369,7 @@ body {
   -webkit-app-region: no-drag;
 }
 
+/* Titlebar control buttons / 标题栏控制按钮 */
 .titlebar-btn {
   cursor: pointer;
   font-size: 16px;
@@ -314,6 +382,7 @@ body {
   opacity: 1;
 }
 
+/* Settings body layout / 设置主体布局 */
 .config-body {
   display: flex;
   flex: 1;
@@ -321,6 +390,7 @@ body {
   overflow: hidden;
 }
 
+/* Sidebar navigation / 侧边栏导航 */
 .sidebar {
   width: 180px;
   background: rgba(var(--bg-secondary-rgb), var(--bg-opacity));
@@ -360,6 +430,7 @@ body {
   padding: 0 8px;
 }
 
+/* Main content area / 主内容区域 */
 .main-content {
   flex: 1;
   position: relative;
@@ -367,6 +438,7 @@ body {
   z-index: 1;
 }
 
+/* Content panel (hidden by default) / 内容面板（默认隐藏）*/
 .content-panel {
   position: absolute;
   top: 0;
@@ -381,6 +453,7 @@ body {
   display: flex;
 }
 
+/* Settings header / 设置页眉 */
 .settings-header {
   display: flex;
   align-items: center;
@@ -401,6 +474,7 @@ body {
   padding: 12px 20px;
 }
 
+/* Individual setting item / 单个设置项 */
 .setting-item {
   display: flex;
   align-items: center;
@@ -413,7 +487,10 @@ body {
   font-size: 14px;
 }
 
-/* About Panel */
+/* ============================================================================
+   About Panel / 关于面板
+   ============================================================================ */
+
 .about-body {
   flex: 1;
   overflow-y: auto;
@@ -440,7 +517,10 @@ body {
   color: var(--text-secondary);
 }
 
-/* Buttons */
+/* ============================================================================
+   Buttons / 按钮
+   ============================================================================ */
+
 .btn {
   padding: 6px 12px;
   border: 1px solid var(--border-color);
@@ -460,7 +540,10 @@ body {
   background: var(--bg-hover);
 }
 
-/* Toast */
+/* ============================================================================
+   Toast Notification / Toast 通知
+   ============================================================================ */
+
 #toast {
   position: fixed;
   bottom: 20px;
@@ -481,7 +564,11 @@ body {
   opacity: 1;
 }
 
-/* Scrollbar */
+/* ============================================================================
+   Scrollbar / 滚动条
+   ============================================================================ */
+
+/* Webkit scrollbar styling / Webkit 滚动条样式 */
 ::-webkit-scrollbar {
   width: 6px;
 }
@@ -495,10 +582,18 @@ body {
   border-radius: 3px;
 }
 
+/* ============================================================================
+   Sliders / 滑块
+   ============================================================================ */
+
 .setting-slider {
   width: 200px;
   cursor: pointer;
 }
+
+/* ============================================================================
+   Entry List (Expert Mode) / 条目列表（专家模式）
+   ============================================================================ */
 
 .entry-list {
   display: flex;
@@ -536,6 +631,7 @@ body {
   text-overflow: ellipsis;
 }
 
+/* Entry edit form / 条目编辑表单 */
 .entry-form-container {
   display: none;
   flex-direction: column;
@@ -550,7 +646,11 @@ body {
   display: flex;
 }
 
-/* Settings Nine Grid */
+/* ============================================================================
+   Settings Simple Mode Grid / 设置简单模式网格
+   ============================================================================ */
+
+/* 3x3 grid for settings simple mode / 设置简单模式的 3x3 网格 */
 .settings-nine-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
@@ -561,6 +661,7 @@ body {
   border: 1px solid var(--border-color);
 }
 
+/* Settings grid item / 设置网格项 */
 .settings-grid-item {
   display: flex;
   flex-direction: column;
@@ -585,6 +686,7 @@ body {
   box-shadow: 0 0 0 1px var(--accent-color);
 }
 
+/* Grid item header with badge / 带徽章的网格项标题 */
 .settings-grid-item-header {
   display: flex;
   justify-content: space-between;
@@ -628,6 +730,10 @@ body {
   overflow-wrap: break-word;
 }
 
+/* ============================================================================
+   Welcome Window / 欢迎窗口
+   ============================================================================ */
+
 #welcome-window {
   position: absolute;
   top: 0;
@@ -653,11 +759,12 @@ body {
   flex-direction: column;
   align-items: center;
   justify-content: space-between;
-  height: calc(100% - 48px); /* 减去标题栏高度 */
+  height: calc(100% - 48px); /* Subtract titlebar height / 减去标题栏高度 */
   text-align: center;
   overflow-y: auto;
 }
 
+/* Individual welcome slide / 单个欢迎幻灯片 */
 .welcome-slide {
   display: none;
   flex-direction: column;
@@ -673,6 +780,7 @@ body {
   animation: fadeInSlide 0.3s ease-out forwards;
 }
 
+/* Slide transition animation / 幻灯片过渡动画 */
 @keyframes fadeInSlide {
   from {
     opacity: 0;
@@ -684,6 +792,7 @@ body {
   }
 }
 
+/* Placeholder for image/video content / 图片/视频内容的占位符 */
 .welcome-placeholder {
   margin: 16px 0;
   width: 100%;
@@ -699,6 +808,7 @@ body {
   flex-shrink: 0;
 }
 
+/* Welcome navigation area / 欢迎导航区域 */
 .welcome-nav-container {
   display: flex;
   flex-direction: column;
@@ -709,6 +819,7 @@ body {
   flex-shrink: 0;
 }
 
+/* Navigation dots / 导航点 */
 .welcome-dots {
   display: flex;
   gap: 8px;
@@ -726,6 +837,7 @@ body {
   background: var(--accent-color);
 }
 
+/* Navigation buttons / 导航按钮 */
 .welcome-nav {
   display: flex;
   gap: 16px;
