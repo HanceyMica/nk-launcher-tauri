@@ -50,3 +50,6 @@ Thumbs.db
 
 # 特殊
 docs/prompt.md
+__pycache__/
+*.pyc
+*.py

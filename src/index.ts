@@ -1388,6 +1388,7 @@ async function init() {
   await loadConfig();
   await loadEntries();
   await initSettingsUI();
+  await setupWelcomeWizard();
 
   updateI18nUI();
 
@@ -1429,9 +1430,14 @@ async function initSettingsUI() {
     // Browser select / 浏览器选择
     const browserSelect = document.getElementById("browser-select") as HTMLSelectElement;
     if (browserSelect) {
-      const browsers = await invoke<BrowserInfo[]>("list_browsers");
-      browserSelect.innerHTML = `<fluent-option value="">${t("system")}</fluent-option>` + browsers.map(b => `<fluent-option value="${b.id}">${b.name}</fluent-option>`).join("");
-      browserSelect.value = config.default_browser || "";
+      try {
+        const browsers = await invoke<BrowserInfo[]>("list_browsers");
+        browserSelect.innerHTML = `<fluent-option value="">${t("system")}</fluent-option>` + browsers.map(b => `<fluent-option value="${b.id}">${b.name}</fluent-option>`).join("");
+        browserSelect.value = config.default_browser || "";
+      } catch (e) {
+        console.error("Failed to list browsers:", e);
+        browserSelect.innerHTML = `<fluent-option value="">${t("system")}</fluent-option>`;
+      }
 
       browserSelect.addEventListener("change", async (e) => {
         const browserId = (e.target as HTMLSelectElement).value;
@@ -1696,52 +1702,60 @@ async function initSettingsUI() {
     // Setup settings UI handlers / 设置 UI 处理器
     setupSimpleSettingsUI();
     setupExpertSettingsUI();
+  } catch (e) {
+    console.error("Failed to init settings UI:", e);
+  }
+}
 
-    // Welcome wizard / 欢迎向导
-    let currentWelcomeSlide = 1;
-    const totalWelcomeSlides = 6;
+/**
+ * Setup Welcome wizard event handlers / 设置欢迎向导事件处理器
+ * Extracted from initSettingsUI to survive settings initialization failures
+ * 从 initSettingsUI 中提取，确保设置初始化失败时 Welcome 向导仍可工作
+ */
+async function setupWelcomeWizard() {
+  let currentWelcomeSlide = 1;
+  const totalWelcomeSlides = 6;
 
-    const updateWelcomeSlides = () => {
-      document.querySelectorAll(".welcome-slide").forEach(slide => {
-        slide.classList.remove("active");
-      });
-      document.getElementById(`slide-${currentWelcomeSlide}`)?.classList.add("active");
+  const updateWelcomeSlides = () => {
+    document.querySelectorAll(".welcome-slide").forEach(slide => {
+      slide.classList.remove("active");
+    });
+    document.getElementById(`slide-${currentWelcomeSlide}`)?.classList.add("active");
 
-      // Update dots / 更新点
-      document.querySelectorAll(".welcome-dots .dot").forEach((dot, index) => {
-        dot.classList.toggle("active", index === currentWelcomeSlide - 1);
-      });
-
-      // Update button states / 更新按钮状态
-      const btnPrev = document.getElementById("btn-welcome-prev") as any;
-      const btnNext = document.getElementById("btn-welcome-next") as any;
-
-      if (btnPrev) btnPrev.disabled = currentWelcomeSlide === 1;
-      if (btnNext) {
-        if (currentWelcomeSlide === totalWelcomeSlides) {
-          btnNext.style.display = "none";
-        } else {
-          btnNext.style.display = "inline-flex";
-        }
-      }
-    };
-
-    // Navigation buttons / 导航按钮
-    document.getElementById("btn-welcome-prev")?.addEventListener("click", () => {
-      if (currentWelcomeSlide > 1) {
-        currentWelcomeSlide--;
-        updateWelcomeSlides();
-      }
+    document.querySelectorAll(".welcome-dots .dot").forEach((dot, index) => {
+      dot.classList.toggle("active", index === currentWelcomeSlide - 1);
     });
 
-    document.getElementById("btn-welcome-next")?.addEventListener("click", () => {
-      if (currentWelcomeSlide < totalWelcomeSlides) {
-        currentWelcomeSlide++;
-        updateWelcomeSlides();
-      }
-    });
+    const btnPrev = document.getElementById("btn-welcome-prev") as any;
+    const btnNext = document.getElementById("btn-welcome-next") as any;
 
-    // Initialize welcome mode radio / 初始化欢迎模式单选
+    if (btnPrev) btnPrev.disabled = currentWelcomeSlide === 1;
+    if (btnNext) {
+      if (currentWelcomeSlide === totalWelcomeSlides) {
+        btnNext.style.display = "none";
+      } else {
+        btnNext.style.display = "inline-flex";
+      }
+    }
+  };
+
+  document.getElementById("btn-welcome-prev")?.addEventListener("click", () => {
+    if (currentWelcomeSlide > 1) {
+      currentWelcomeSlide--;
+      updateWelcomeSlides();
+    }
+  });
+
+  document.getElementById("btn-welcome-next")?.addEventListener("click", () => {
+    if (currentWelcomeSlide < totalWelcomeSlides) {
+      currentWelcomeSlide++;
+      updateWelcomeSlides();
+    }
+  });
+
+  try {
+    const config = await invoke<AppConfig>("get_config");
+
     const modeGroup = document.getElementById("welcome-mode-group") as any;
     if (modeGroup) {
       modeGroup.value = config.mode;
@@ -1758,7 +1772,6 @@ async function initSettingsUI() {
       });
     }
 
-    // Theme buttons / 主题按钮
     document.querySelectorAll(".btn-welcome-theme").forEach(btn => {
       if (btn.getAttribute("data-theme") === (config.theme || "system")) {
         btn.setAttribute("appearance", "accent");
@@ -1775,46 +1788,41 @@ async function initSettingsUI() {
           applyTheme(theme);
           const themeSelect = document.getElementById("theme-select") as HTMLSelectElement;
           if (themeSelect) themeSelect.value = theme;
-
           showToast(`${t("mode_selected")}${t(theme === "light" ? "light_mode" : theme === "dark" ? "dark_mode" : "system")}`);
-
-          // Update button states / 更新按钮状态
           document.querySelectorAll(".btn-welcome-theme").forEach(b => b.removeAttribute("appearance"));
           (e.currentTarget as HTMLElement).setAttribute("appearance", "accent");
         }
       });
     });
-
-    // Finish welcome / 完成欢迎
-    const btnFinishWelcome = document.getElementById("btn-finish-welcome");
-    if (btnFinishWelcome) {
-      btnFinishWelcome.addEventListener("click", async () => {
-        await invoke("mark_launched");
-        hideWelcomeWindow();
-        if (currentMode === "simple") {
-          collapsed = false;
-          renderResults([]);
-        } else {
-          setCollapsed(true);
-          renderResults([]);
-        }
-        showToast(t("press_alt_space"));
-      });
-    }
-
-    // Clear launched state / 清除启动状态
-    const btnClearLaunched = document.getElementById("btn-clear-launched");
-    if (btnClearLaunched) {
-      btnClearLaunched.addEventListener("click", async () => {
-        await invoke("unmark_launched");
-        showToast(t("clear_launched_success"));
-        setTimeout(() => {
-          location.reload();
-        }, 1500);
-      });
-    }
   } catch (e) {
-    console.error("Failed to init settings UI:", e);
+    console.error("Failed to init welcome wizard config:", e);
+  }
+
+  const btnFinishWelcome = document.getElementById("btn-finish-welcome");
+  if (btnFinishWelcome) {
+    btnFinishWelcome.addEventListener("click", async () => {
+      await invoke("mark_launched");
+      hideWelcomeWindow();
+      if (currentMode === "simple") {
+        collapsed = false;
+        renderResults([]);
+      } else {
+        setCollapsed(true);
+        renderResults([]);
+      }
+      showToast(t("press_alt_space"));
+    });
+  }
+
+  const btnClearLaunched = document.getElementById("btn-clear-launched");
+  if (btnClearLaunched) {
+    btnClearLaunched.addEventListener("click", async () => {
+      await invoke("unmark_launched");
+      showToast(t("clear_launched_success"));
+      setTimeout(() => {
+        location.reload();
+      }, 1500);
+    });
   }
 }
 
