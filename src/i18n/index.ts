@@ -144,7 +144,10 @@ const translations: Record<string, TranslationDict> = {
     unset: "未设置",
     edit_grid_with_cmd: "编辑格子 {cmd}",
     hotkey_register_failed: "⚠ 全局快捷键 {shortcut} 注册失败，可能被其他程序占用",
-    search_settings: "搜索设置"
+    search_settings: "搜索设置",
+    hide_to_tray: "隐藏到托盘",
+    will_use_config: "将使用以下配置：",
+    confirm_enter_launcher: "确定进入启动器？"
   },
   en: {
     setting: "Setting",
@@ -263,7 +266,10 @@ const translations: Record<string, TranslationDict> = {
     unset: "Not set",
     edit_grid_with_cmd: "Edit grid {cmd}",
     hotkey_register_failed: "⚠ Failed to register global hotkey {shortcut}, may be in use by another program",
-    search_settings: "Search settings"
+    search_settings: "Search settings",
+    hide_to_tray: "Hide to tray",
+    will_use_config: "Will use the following configuration:",
+    confirm_enter_launcher: "Confirm to enter launcher?"
   },
   ja: {
     setting: "設定",
@@ -382,7 +388,10 @@ const translations: Record<string, TranslationDict> = {
     unset: "未設定",
     edit_grid_with_cmd: "グリッド {cmd} を編集",
     hotkey_register_failed: "⚠ グローバルホットキー {shortcut} の登録に失敗しました。他のプログラムが使用中の可能性があります",
-    search_settings: "設定を検索"
+    search_settings: "設定を検索",
+    hide_to_tray: "トレイに隠す",
+    will_use_config: "以下の設定を使用します：",
+    confirm_enter_launcher: "ランチャーを起動しますか？"
   },
 };
 

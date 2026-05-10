@@ -188,6 +188,9 @@ fluent-option {
   flex-direction: column;
   min-height: 0;
 }
+/* Narrow scrollbar so it doesn't compete with content width. */
+#result-list::-webkit-scrollbar { width: 4px; }
+#result-list::-webkit-scrollbar-thumb { background: var(--border-color); border-radius: 2px; }
 
 /* Individual result item / 单个结果项 */
 .result-item {

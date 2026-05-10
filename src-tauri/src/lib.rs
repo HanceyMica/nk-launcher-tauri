@@ -874,6 +874,40 @@ async fn import_config(json: String, state: State<'_, AppState>) -> Result<(), S
     state.config.import_json(&json).map_err(|e| e.to_string())
 }
 
+/// Export config to a user-chosen path. Frontend obtains the path via
+/// `dialog::save()`, then hands it here for the actual write.
+/// 导出配置到用户选择的路径 — 前端先用 dialog::save 选路径再传过来。
+#[tauri::command]
+async fn export_config_to_file(
+    path: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let json = state.config.export_json().map_err(|e| e.to_string())?;
+    std::fs::write(&path, json).map_err(|e| format!("Failed to write {}: {}", path, e))
+}
+
+/// Import config from a user-chosen path. Mirror of export_config_to_file.
+/// 从用户选择的路径导入配置。
+#[tauri::command]
+async fn import_config_from_file(
+    path: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let json = std::fs::read_to_string(&path)
+        .map_err(|e| format!("Failed to read {}: {}", path, e))?;
+    state.config.import_json(&json).map_err(|e| e.to_string())
+}
+
+/// Full application exit mirroring the tray "Quit" action, callable from frontend.
+/// 完整退出应用，镜像托盘"退出"操作，前端可调用。
+#[tauri::command]
+async fn quit_app(app: AppHandle) -> Result<(), String> {
+    app.exit(0);
+    // unreachable, but keeps the compiler happy
+    #[allow(unreachable_code)]
+    Ok(())
+}
+
 // ============================================================================
 // Tauri Commands: Window Visibility / Tauri 命令：窗口可见性
 // ============================================================================
@@ -1078,6 +1112,9 @@ pub fn run() {
             get_hotkey_status,
             export_config,
             import_config,
+            export_config_to_file,
+            import_config_from_file,
+            quit_app,
             show_window,
             hide_window,
             resize_window,

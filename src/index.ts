@@ -17,8 +17,8 @@
 // ============================================================================
 
 import { invoke } from "@tauri-apps/api/core";
-import { getCurrentWindow } from "@tauri-apps/api/window";
-import { initI18n, t, setLanguage } from "./i18n/index";
+import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
+import { initI18n, t, setLanguage, getCurrentLanguage } from "./i18n/index";
 
 // Fluent UI Web Components for settings dialog
 // 用于设置对话框的 Fluent UI Web Components
@@ -143,6 +143,9 @@ let commandMode = false;
 /** Currently selected result index / 当前选中的结果索引 */
 let selectedIndex = 0;
 
+/** Number of DOM items currently rendered — bounds keyboard navigation. */
+let visibleResultCount = 0;
+
 /** Whether launcher is collapsed (minimal UI) / 启动器是否折叠（最小化 UI）*/
 let collapsed = true;
 
@@ -252,7 +255,8 @@ function showWelcomeWindow() {
   if (welcomeWindow) welcomeWindow.classList.add("visible");
   if (container) container.style.display = "none";
   if (configWindow) configWindow.classList.remove("visible");
-  applyState("welcome", 700.0, 500.0);
+  getCurrentWindow().setSkipTaskbar(false).catch(() => {});
+  applyState("welcome", 1000.0, 600.0);
 }
 
 /**
@@ -262,6 +266,7 @@ function hideWelcomeWindow() {
   settingsVisible = false;
   if (welcomeWindow) welcomeWindow.classList.remove("visible");
   if (container) container.style.display = "block";
+  getCurrentWindow().setSkipTaskbar(true).catch(() => {});
 }
 
 /**
@@ -353,17 +358,29 @@ document.querySelector(".btn-welcome-minimize")?.addEventListener("click", () =>
   getCurrentWindow().minimize();
 });
 
-document.querySelector(".btn-welcome-maximize")?.addEventListener("click", async () => {
-  const win = getCurrentWindow();
-  if (await win.isMaximized()) {
-    win.unmaximize();
-  } else {
-    win.maximize();
-  }
-});
+document.querySelector(".btn-welcome-close")?.addEventListener("click", async () => {
+  // Show current config (user picks or defaults) before entering launcher. (#5)
+  const lang = getCurrentLanguage();
+  const langLabel = { zh: "中文", en: "English", ja: "日本語" }[lang] ?? lang;
+  const theme = document.body.dataset.theme ?? "system";
+  const themeLabel =
+    theme === "dark" ? t("dark_mode")
+    : theme === "light" ? t("light_mode")
+    : t("system");
+  const modeLabel =
+    currentMode === "simple" ? t("simple_mode") : t("expert_mode");
+  const msg = `${t('will_use_config')}\n\n${t('mode')}：${modeLabel}\n${t('language')}：${langLabel}\n${t('theme')}：${themeLabel}\n\n${t('confirm_enter_launcher')}`;
+  if (!window.confirm(msg)) return;
 
-document.querySelector(".btn-welcome-close")?.addEventListener("click", () => {
+  await invoke("mark_launched").catch(() => {});
   hideWelcomeWindow();
+  if (currentMode === "simple") {
+    collapsed = false;
+    renderResults([]);
+  } else {
+    setCollapsed(true);
+    renderResults([]);
+  }
 });
 
 // Sidebar navigation / 侧边栏导航
@@ -617,7 +634,7 @@ searchInput?.addEventListener("keydown", async (e) => {
     }
   } else if (e.key === "ArrowDown") {
     e.preventDefault();
-    selectedIndex = Math.min(selectedIndex + 1, entries.length - 1);
+    selectedIndex = Math.min(selectedIndex + 1, Math.max(0, visibleResultCount - 1));
     updateSelection();
   } else if (e.key === "ArrowUp") {
     e.preventDefault();
@@ -655,16 +672,16 @@ function renderCommandSuggestions() {
     { cmd: "d", label: t("dark"), icon: `<i class="fa-solid fa-moon"></i>`, action: async () => { await invoke("save_config", { key: "global/theme", value: "dark" }); applyTheme("dark"); } },
     { cmd: "l", label: t("light"), icon: `<i class="fa-solid fa-sun"></i>`, action: async () => { await invoke("save_config", { key: "global/theme", value: "light" }); applyTheme("light"); } },
     { cmd: "w", label: t("system"), icon: `<i class="fa-solid fa-desktop"></i>`, action: async () => { await invoke("save_config", { key: "global/theme", value: "system" }); applyTheme("system"); } },
-    { cmd: "i", label: t("import"), icon: `<i class="fa-solid fa-file-import"></i>`, action: () => {
-      const configImportInput = document.getElementById("config-import-input") as HTMLInputElement;
-      if (configImportInput) configImportInput.click();
-    } },
-    { cmd: "o", label: t("export"), icon: `<i class="fa-solid fa-file-export"></i>`, action: async () => { const json = await invoke<string>("export_config"); downloadJson(json); } },
+    { cmd: "i", label: t("import"), icon: `<i class="fa-solid fa-file-import"></i>`, action: () => importConfigFromFile() },
+    { cmd: "o", label: t("export"), icon: `<i class="fa-solid fa-file-export"></i>`, action: () => exportConfigToFile() },
     { cmd: "a", label: t("about"), icon: `<i class="fa-solid fa-info-circle"></i>`, action: () => showConfigWindow("about-settings") },
+    { cmd: "e", label: t("hide_to_tray"), icon: `<i class="fa-solid fa-eye-slash"></i>`, action: () => invoke("hide_window") },
+    { cmd: "q", label: t("quit"), icon: `<i class="fa-solid fa-power-off"></i>`, action: () => invoke("quit_app") },
   ];
 
   // Filter commands by query / 根据查询过滤命令
   const filtered = commands.filter(c => c.cmd.startsWith(searchQuery.slice(1).toLowerCase()));
+  visibleResultCount = filtered.length;
   const html = filtered.map((c, i) => `<div class="result-item ${i === selectedIndex ? 'selected' : ''}" data-index="${i}">${c.icon} /${c.cmd} → ${c.label}</div>`).join("");
   resultList.innerHTML = html;
 
@@ -706,13 +723,11 @@ async function executeCommand(cmd: string) {
     d: async () => { await invoke("save_config", { key: "global/theme", value: "dark" }); applyTheme("dark"); },
     l: async () => { await invoke("save_config", { key: "global/theme", value: "light" }); applyTheme("light"); },
     w: async () => { await invoke("save_config", { key: "global/theme", value: "system" }); applyTheme("system"); },
-    i: () => {
-      const configImportInput = document.getElementById("config-import-input") as HTMLInputElement;
-      if (configImportInput) configImportInput.click();
-      return Promise.resolve();
-    },
-    o: async () => { const json = await invoke<string>("export_config"); downloadJson(json); },
+    i: () => importConfigFromFile(),
+    o: () => exportConfigToFile(),
     a: () => { showConfigWindow("about-settings"); return Promise.resolve(); },
+    e: () => { invoke("hide_window"); return Promise.resolve(); },
+    q: () => { invoke("quit_app"); return Promise.resolve(); },
   };
 
   if (commands[cmd]) {
@@ -759,11 +774,23 @@ function scheduleResize(width: number, height: number) {
 /**
  * Stateful resize: tracks current logical state and applies persisted
  * dimensions when present, falling back to defaults otherwise.
+ * Also enforces per-state minimum window size to prevent degenerate drag.
  * 按状态记忆窗口尺寸：若有持久化值则用，否则落到默认。
+ * 同时强制按状态设置最小窗口尺寸，防止拖拽到无法使用的大小。
  */
 let currentWindowState: WindowState = "expert_collapsed";
 let persistedSizes: Partial<Record<WindowState, [number, number]>> = {};
 let lastProgrammaticSize: { w: number; h: number } | null = null;
+
+const STATE_MIN_SIZES: Record<WindowState, [number, number]> = {
+  simple_grid: [340, 380],
+  simple_collapsed: [340, 40],
+  simple_results: [340, 120],
+  expert_collapsed: [300, 40],
+  expert_results: [300, 120],
+  settings: [700, 500],
+  welcome: [1000, 600],
+};
 
 function applyState(state: WindowState, defaultW: number, defaultH: number) {
   currentWindowState = state;
@@ -771,21 +798,50 @@ function applyState(state: WindowState, defaultW: number, defaultH: number) {
   const w = persisted?.[0] ?? defaultW;
   const h = persisted?.[1] ?? defaultH;
   lastProgrammaticSize = { w, h };
+  const [minW, minH] = STATE_MIN_SIZES[state];
+  getCurrentWindow().setMinSize(new LogicalSize(minW, minH)).catch(() => {});
   scheduleResize(w, h);
 }
 
 /**
- * Download JSON as file / 将 JSON 下载为文件
- * @param {string} json - JSON string to download / 要下载的 JSON 字符串
+ * Export config via native save dialog so the user picks the destination.
+ * 通过原生保存对话框让用户挑路径/文件名。
  */
-function downloadJson(json: string) {
-  const blob = new Blob([json], { type: "application/json" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = "nk-launcher-config.json";
-  a.click();
-  URL.revokeObjectURL(url);
+async function exportConfigToFile() {
+  const { save } = await import("@tauri-apps/plugin-dialog");
+  const today = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+  const path = await save({
+    defaultPath: `nk-launcher-config-${today}.json`,
+    filters: [{ name: "JSON", extensions: ["json"] }],
+  });
+  if (!path) return; // user cancelled
+  try {
+    await invoke("export_config_to_file", { path });
+    showToast(t("export_success"));
+  } catch (e) {
+    showToast(String(e), true);
+  }
+}
+
+/**
+ * Import config via native open dialog. On success the window reloads so
+ * all caches reflect the new state.
+ * 通过原生打开对话框选择 JSON，导入成功后刷新窗口使全部缓存重置。
+ */
+async function importConfigFromFile() {
+  const { open } = await import("@tauri-apps/plugin-dialog");
+  const path = await open({
+    multiple: false,
+    filters: [{ name: "JSON", extensions: ["json"] }],
+  });
+  if (!path || typeof path !== "string") return;
+  try {
+    await invoke("import_config_from_file", { path });
+    showToast(t("import_restarting"));
+    setTimeout(() => location.reload(), 1500);
+  } catch (e) {
+    showToast(t("import_failed") + ": " + String(e), true);
+  }
 }
 
 /**
@@ -834,6 +890,7 @@ async function executeEntry(entry: Entry) {
 function renderResults(results: Entry[]) {
   if (results.length === 0) {
     // No results: show grid (simple) or empty (expert) / 无结果：显示网格（简单）或空（专家）
+    visibleResultCount = 0;
     if (currentMode === "simple" && !searchQuery) {
       renderSimpleGrid();
     } else {
@@ -844,6 +901,8 @@ function renderResults(results: Entry[]) {
     }
     return;
   }
+
+  visibleResultCount = results.length;
 
   // Resize window to fit results / 调整窗口大小以容纳结果
   const targetWidth = currentMode === "simple" ? 340.0 : currentSearchWidth;
@@ -900,6 +959,8 @@ function updateSelection() {
   document.querySelectorAll(".result-item").forEach((item, i) => {
     item.classList.toggle("selected", i === selectedIndex);
   });
+  document.querySelectorAll(".result-item")[selectedIndex]
+    ?.scrollIntoView({ block: "nearest" });
 }
 
 // ============================================================================
@@ -1359,22 +1420,21 @@ function setupExpertSettingsUI() {
 // ============================================================================
 
 /**
- * Handle clicks outside interactive elements
- * 处理在交互元素外部的点击
- * @description Hides window if clicking outside container, config, or welcome windows
- * 如果点击在容器、配置或欢迎窗口外部则隐藏窗口
+ * Hide window on outside clicks. For a borderless transparent window the OS
+ * dropshadow/chrome registers clicks on <body>/<html> — we ignore those.
+ * 外部点击隐藏窗口。无边框透明窗口的投影/边框区域点击目标是 body/html → 跳过。
  */
 document.addEventListener("click", (e) => {
   const target = e.target as Node;
-
-  // Check if target element was removed from DOM (e.g., after re-render)
-  // 检查目标元素是否已从 DOM 中移除（如重新渲染后）
-  if (!document.contains(target)) {
-    return;
-  }
-
-  // Hide window if clicking outside / 如果在外部点击则隐藏窗口
-  if (!container.contains(target) && !configWindow?.contains(target) && !welcomeWindow?.contains(target)) {
+  if (!document.contains(target)) return;
+  // Clicks on document root / body fall on transparent window chrome of a
+  // borderless window — they are NOT "outside" clicks. (#6)
+  if (target === document.body || target === document.documentElement) return;
+  if (
+    !container.contains(target) &&
+    !configWindow?.contains(target) &&
+    !welcomeWindow?.contains(target)
+  ) {
     invoke("hide_window");
   }
 });
@@ -1477,6 +1537,15 @@ async function init() {
   listen("hotkey-register-failed", (event: any) => {
     const shortcut = event.payload || "Alt+Space";
     showToast(t("hotkey_register_failed").replace("{shortcut}", shortcut), true);
+  });
+
+  // Auto-focus search input whenever the window gains focus (e.g. via hotkey).
+  // 窗口获得焦点时自动聚焦搜索框（比如按快捷键唤出）。
+  getCurrentWindow().onFocusChanged(({ payload: focused }) => {
+    if (focused) {
+      searchInput?.focus();
+      searchInput?.select();
+    }
   });
 
   // Initialize i18n and load data / 初始化 i18n 并加载数据
@@ -1635,43 +1704,9 @@ async function initSettingsUI() {
       });
     }
 
-    // Export/Import config / 导出/导入配置
-    const btnExportConfig = document.getElementById("btn-export-config");
-    const btnImportConfig = document.getElementById("btn-import-config");
-    const configImportInput = document.getElementById("config-import-input") as HTMLInputElement;
-
-    if (btnExportConfig) {
-      btnExportConfig.addEventListener("click", async () => {
-        const json = await invoke<string>("export_config");
-        downloadJson(json);
-      });
-    }
-
-    if (btnImportConfig && configImportInput) {
-      btnImportConfig.addEventListener("click", () => {
-        configImportInput.click();
-      });
-
-      configImportInput.addEventListener("change", (e) => {
-        const file = (e.target as HTMLInputElement).files?.[0];
-        if (!file) return;
-
-        const reader = new FileReader();
-        reader.onload = async (event) => {
-          const content = event.target?.result as string;
-          try {
-            await invoke("import_config", { json: content });
-            showToast(t("import_restarting"));
-            setTimeout(() => {
-              location.reload();
-            }, 1500);
-          } catch (err) {
-            showToast(t("import_failed") + ": " + String(err), true);
-          }
-        };
-        reader.readAsText(file);
-      });
-    }
+    // Export/Import config — both go through native OS dialogs (#feature-import-export).
+    document.getElementById("btn-export-config")?.addEventListener("click", exportConfigToFile);
+    document.getElementById("btn-import-config")?.addEventListener("click", importConfigFromFile);
 
     // Hotkey input / 热键输入
     const hotkeyInput = document.getElementById("hotkey-input") as HTMLInputElement;
