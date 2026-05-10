@@ -6,6 +6,8 @@ use crate::error::AppError;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::process::Command;
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 // ============================================================================
 // Data Structures / 数据结构
@@ -123,10 +125,27 @@ impl RegistryProvider for WindowsRegistry {
     }
 }
 
-/// Enumerate all browsers using Windows registry / 使用 Windows 注册表枚举所有浏览器
+/// 5-second TTL cache to skip redundant registry walks within a single launch action.
+/// Browsers rarely change at runtime, but install events do happen — TTL keeps a fresh view.
+static BROWSER_CACHE: Mutex<Option<(Instant, Vec<BrowserInfo>)>> = Mutex::new(None);
+const BROWSER_CACHE_TTL: Duration = Duration::from_secs(5);
+
+/// Enumerate all browsers using Windows registry, with a short TTL cache.
+/// 枚举浏览器，带 5 秒 TTL 缓存以避免重复扫描注册表。
 pub fn enumerate_browsers() -> Result<Vec<BrowserInfo>, AppError> {
-    let provider = WindowsRegistry;
-    provider.enumerate_browsers()
+    if let Ok(guard) = BROWSER_CACHE.lock() {
+        if let Some((stamp, list)) = guard.as_ref() {
+            if stamp.elapsed() < BROWSER_CACHE_TTL {
+                return Ok(list.clone());
+            }
+        }
+    }
+
+    let list = WindowsRegistry.enumerate_browsers()?;
+    if let Ok(mut guard) = BROWSER_CACHE.lock() {
+        *guard = Some((Instant::now(), list.clone()));
+    }
+    Ok(list)
 }
 
 // ============================================================================

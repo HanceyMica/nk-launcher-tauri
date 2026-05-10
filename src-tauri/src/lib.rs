@@ -28,12 +28,13 @@ pub use error::AppError;
 
 /// Global application state shared across all Tauri commands
 /// 全局应用状态，在所有 Tauri 命令间共享
-/// - db: SQLite database for entries and config / 用于 entries 和 config 的 SQLite 数据库
-/// - config: ConfigManager for JSON-based settings / ConfigManager 用于 JSON 配置
-/// - current_hotkey: Currently registered global shortcut / 当前注册的全量的快捷键
+/// - db: Shared SQLite database (single connection) / 共享 SQLite 数据库（单连接）
+/// - config: ConfigManager — internally references the same `db` via Arc / 通过 Arc 复用同一连接
+/// - current_hotkey: Currently registered global shortcut / 当前注册的全局快捷键
+/// - window_visible: Mirror of webview show/hide state / 主窗口当前是否可见
 pub struct AppState {
     pub db: Arc<Mutex<db::Database>>,
-    pub config: Arc<Mutex<config::ConfigManager>>,
+    pub config: config::ConfigManager,
     pub current_hotkey: Arc<Mutex<Option<Shortcut>>>,
     pub window_visible: Arc<Mutex<bool>>,
 }
@@ -42,27 +43,30 @@ pub struct AppState {
 // Directory & Logging / 目录与日志
 // ============================================================================
 
-/// Get application data directory / 获取应用数据目录
-/// Returns: $LOCALAPPDATA/nk-launcher-tauri / 返回：$LOCALAPPDATA/nk-launcher-tauri
-/// - On Windows: typically C:\Users\<user>\AppData\Local
-/// - Fallback to current directory if LOCALAPPDATA not set
-fn get_data_dir(_app: &AppHandle) -> PathBuf {
-    let local_app_data = std::env::var("LOCALAPPDATA").unwrap_or_else(|_| ".".to_string());
-    PathBuf::from(local_app_data).join("nk-launcher-tauri")
+/// Get application data directory via Tauri's path resolver.
+/// 通过 Tauri 的 PathResolver 获取应用数据目录，避免直接读 LOCALAPPDATA。
+fn get_data_dir(app: &AppHandle) -> Result<PathBuf, AppError> {
+    app.path()
+        .app_local_data_dir()
+        .map_err(|e| AppError::Io(e.to_string()))
 }
 
 /// Get log directory / 获取日志目录
-/// Returns: <data_dir>/logs / 返回：<数据目录>/logs
-fn get_log_dir(app: &AppHandle) -> PathBuf {
-    get_data_dir(app).join("logs")
+fn get_log_dir(app: &AppHandle) -> Result<PathBuf, AppError> {
+    Ok(get_data_dir(app)?.join("logs"))
 }
 
 /// Write error message to daily rotating log file / 将错误信息写入按日滚动的日志文件
 /// File format: error-YYYY-MM-DD.txt / 文件格式：error-YYYY-MM-DD.txt
 /// Used for crash diagnostics and debugging / 用于崩溃诊断和调试
 fn write_error_log(app: &AppHandle, message: &str) {
-    let log_dir = get_log_dir(app);
-    // Format: YYYY-MM-DD for daily log rotation / 按日轮转的日期格式
+    let log_dir = match get_log_dir(app) {
+        Ok(d) => d,
+        Err(e) => {
+            error!("write_error_log: cannot resolve log dir: {}", e);
+            return;
+        }
+    };
     let date_str = chrono::Local::now().format("%Y-%m-%d").to_string();
     let log_file = log_dir.join(format!("error-{}.txt", date_str));
 
@@ -79,7 +83,7 @@ fn write_error_log(app: &AppHandle, message: &str) {
 /// Initialize logging directory / 初始化日志目录
 /// Creates log directory if it doesn't exist / 如果日志目录不存在则创建
 fn setup_logging(app: &AppHandle) -> Result<(), AppError> {
-    let log_dir = get_log_dir(app);
+    let log_dir = get_log_dir(app)?;
     std::fs::create_dir_all(&log_dir).map_err(|e| AppError::Io(e.to_string()))?;
     Ok(())
 }
@@ -161,23 +165,18 @@ fn update_window_position(window: &WebviewWindow) -> Result<(), AppError> {
         .primary_monitor()
         .map_err(|e| AppError::Ui(e.to_string()))?
     {
-        let scale = monitor.scale_factor();
-        let size = monitor.size();
+        // monitor.size() and window.outer_size() are both PhysicalSize.
+        // Computing in physical pixels and using PhysicalPosition keeps the
+        // units consistent on HiDPI displays. The previous version divided by
+        // scale_factor and then passed the resulting logical numbers as
+        // PhysicalPosition — placing the window far off-center on >1x DPI.
+        let monitor_size = monitor.size();
         let win_size = window
             .outer_size()
             .map_err(|e| AppError::Ui(e.to_string()))?;
 
-        // Convert from physical pixels to logical pixels for HiDPI support
-        // 从物理像素转换为逻辑像素以支持 HiDPI
-        let screen_w = size.width as f64 / scale;
-        let screen_h = size.height as f64 / scale;
-        let win_w = win_size.width as f64 / scale;
-        let win_h = win_size.height as f64 / scale;
-
-        // Center horizontally / 水平居中
-        let x = ((screen_w - win_w) / 2.0) as i32;
-        // Position at 1/3 from top (upper-center) / 放在距顶部 1/3 处（上部居中）
-        let y = ((screen_h / 3.0) - (win_h / 2.0)) as i32;
+        let x = (monitor_size.width as i32 - win_size.width as i32) / 2;
+        let y = (monitor_size.height as i32) / 3 - (win_size.height as i32) / 2;
 
         window
             .set_position(tauri::Position::Physical(tauri::PhysicalPosition { x, y }))
@@ -264,12 +263,10 @@ fn parse_shortcut(shortcut_str: &str) -> Result<Shortcut, String> {
 fn setup_global_shortcut(app: &AppHandle, state: State<'_, AppState>) {
     let handle = app.clone();
 
-    let shortcut_str = {
-        let config = state.config.lock();
-        config
-            .get_str("global/shortcut")
-            .unwrap_or_else(|_| "Alt+Space".to_string())
-    };
+    let shortcut_str = state
+        .config
+        .get_str("global/shortcut")
+        .unwrap_or_else(|_| "Alt+Space".to_string());
 
     let shortcut = parse_shortcut(&shortcut_str).unwrap_or_else(|e| {
         error!("Failed to parse shortcut '{}': {}, falling back", shortcut_str, e);
@@ -301,8 +298,7 @@ fn setup_global_shortcut(app: &AppHandle, state: State<'_, AppState>) {
 /// 返回包含 version、mode、theme、language、default_browser 的 AppConfig
 #[tauri::command]
 async fn get_config(state: State<'_, AppState>) -> Result<config::AppConfig, String> {
-    let config = state.config.lock();
-    config.get_all().map_err(|e| e.to_string())
+    state.config.get_all().map_err(|e| e.to_string())
 }
 
 /// Save a configuration key-value pair / 保存配置键值对
@@ -315,8 +311,7 @@ async fn save_config(
     value: serde_json::Value,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    let mut config = state.config.lock();
-    config.set(&key, value).map_err(|e| e.to_string())
+    state.config.set(&key, value).map_err(|e| e.to_string())
 }
 
 // ============================================================================
@@ -326,8 +321,10 @@ async fn save_config(
 /// Get current mode (expert/simple) / 获取当前模式（expert/simple）
 #[tauri::command]
 async fn get_mode(state: State<'_, AppState>) -> Result<String, String> {
-    let config = state.config.lock();
-    config.get_str("global/mode").map_err(|e| e.to_string())
+    state
+        .config
+        .get_str("global/mode")
+        .map_err(|e| e.to_string())
 }
 
 /// Set current mode / 设置当前模式
@@ -335,8 +332,8 @@ async fn get_mode(state: State<'_, AppState>) -> Result<String, String> {
 /// - mode: Either "expert" or "simple" / 为 "expert" 或 "simple"
 #[tauri::command]
 async fn set_mode(mode: String, state: State<'_, AppState>) -> Result<(), String> {
-    let mut config = state.config.lock();
-    config
+    state
+        .config
         .set("global/mode", serde_json::json!(mode))
         .map_err(|e| e.to_string())
 }
@@ -408,7 +405,6 @@ async fn fuzzy_search(query: String, entries: Vec<db::Entry>) -> Vec<db::Entry> 
 fn get_custom_browsers(state: &State<'_, AppState>) -> Vec<browser::BrowserInfo> {
     state
         .config
-        .lock()
         .get("global/custom_browsers")
         .and_then(|v| serde_json::from_value(v).map_err(|e| AppError::Config(e.to_string())))
         .unwrap_or_else(|_| Vec::new())
@@ -445,10 +441,10 @@ async fn add_custom_browser(
     name: String,
     path: String,
     state: State<'_, AppState>,
-) -> Result<(), String> {
+) -> Result<String, String> {
     // Generate id from name: lowercase, spaces to underscores
     // 从名称生成 id：转小写，空格变下划线
-    let id = format!("custom_{}", name.to_lowercase().replace(" ", "_"));
+    let id = format!("custom_{}", name.to_lowercase().replace(' ', "_"));
     let new_browser = browser::BrowserInfo {
         id: id.clone(),
         name: name.clone(),
@@ -457,19 +453,17 @@ async fn add_custom_browser(
 
     let mut custom = get_custom_browsers(&state);
     if let Some(existing) = custom.iter_mut().find(|b| b.id == id) {
-        // Update existing / 更新已存在的
         existing.exe_path = Some(path);
         existing.name = name;
     } else {
-        // Add new / 添加新的
         custom.push(new_browser);
     }
 
-    let mut config = state.config.lock();
-    config
+    state
+        .config
         .set("global/custom_browsers", serde_json::json!(custom))
         .map_err(|e| e.to_string())?;
-    Ok(())
+    Ok(id)
 }
 
 /// Open URL with specified or default browser / 使用指定或默认浏览器打开 URL
@@ -488,26 +482,17 @@ async fn open_url(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    // Determine which browser to use / 确定使用哪个浏览器
-    let browser_cmd = if let Some(_bid) = browser_id {
-        // Frontend passed specific browser, check global config for actual command
-        // 前端传递了特定浏览器，检查全局配置获取实际命令
-        state
-            .config
-            .lock()
-            .get_str(&format!("global/default_browser"))
-            .ok()
-            .and_then(|s| if s.is_empty() { None } else { Some(s) })
-    } else {
-        // If frontend didn't pass a specific browser id, read from global config
-        // 如果前端没有传递特定浏览器 id，从全局配置读取
-        state
-            .config
-            .lock()
-            .get_str("global/default_browser")
-            .ok()
-            .and_then(|s| if s.is_empty() { None } else { Some(s) })
-    };
+    // Honor explicit browser_id from caller; fall back to configured default.
+    // 优先使用调用方显式传入的 browser_id；否则回退到配置的默认浏览器。
+    let browser_cmd = browser_id
+        .filter(|s| !s.is_empty())
+        .or_else(|| {
+            state
+                .config
+                .get_str("global/default_browser")
+                .ok()
+                .filter(|s| !s.is_empty())
+        });
 
     // Try to resolve browser path / 尝试解析浏览器路径
     let mut exe_path_res =
@@ -550,7 +535,18 @@ async fn open_url(
 /// - Writes to error log on failure / 失败时写入错误日志
 #[tauri::command]
 async fn open_app(path: String, app: AppHandle) -> Result<(), String> {
-    std::process::Command::new(&path).spawn().map_err(|e| {
+    let mut cmd = std::process::Command::new(&path);
+
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        // Detach so the child survives launcher exit (mirrors open_url_with_browser).
+        // 使子进程与启动器脱钩，与 open_url_with_browser 行为一致。
+        const DETACHED_PROCESS: u32 = 0x00000008;
+        cmd.creation_flags(DETACHED_PROCESS);
+    }
+
+    cmd.spawn().map_err(|e| {
         let msg = format!("Failed to open {}: {}", path, e);
         write_error_log(&app, &msg);
         msg
@@ -862,9 +858,7 @@ async fn check_hotkey_conflict(
 /// ```
 #[tauri::command]
 async fn export_config(state: State<'_, AppState>) -> Result<String, String> {
-    let config = state.config.lock();
-    let db = state.db.lock();
-    config.export_json(&db).map_err(|e| e.to_string())
+    state.config.export_json().map_err(|e| e.to_string())
 }
 
 /// Import configuration and entries from JSON
@@ -877,11 +871,7 @@ async fn export_config(state: State<'_, AppState>) -> Result<String, String> {
 /// - 使用 INSERT OR REPLACE 所以现有条目会被更新
 #[tauri::command]
 async fn import_config(json: String, state: State<'_, AppState>) -> Result<(), String> {
-    let mut config = state.config.lock();
-    let mut db = state.db.lock();
-    config
-        .import_json(&mut db, &json)
-        .map_err(|e| e.to_string())
+    state.config.import_json(&json).map_err(|e| e.to_string())
 }
 
 // ============================================================================
@@ -918,7 +908,7 @@ async fn hide_window(app: AppHandle) -> Result<(), String> {
 /// - true if launched before, false if first launch
 #[tauri::command]
 async fn get_has_launched(app: AppHandle) -> Result<bool, String> {
-    let flag_path = get_data_dir(&app).join("launched.flag");
+    let flag_path = get_data_dir(&app).map_err(|e| e.to_string())?.join("launched.flag");
     Ok(flag_path.exists())
 }
 
@@ -927,7 +917,7 @@ async fn get_has_launched(app: AppHandle) -> Result<bool, String> {
 /// Called after first-run wizard completes / 在首次运行向导完成后调用
 #[tauri::command]
 async fn mark_launched(app: AppHandle) -> Result<(), String> {
-    let flag_path = get_data_dir(&app).join("launched.flag");
+    let flag_path = get_data_dir(&app).map_err(|e| e.to_string())?.join("launched.flag");
     std::fs::write(&flag_path, b"").map_err(|e| e.to_string())
 }
 
@@ -936,7 +926,7 @@ async fn mark_launched(app: AppHandle) -> Result<(), String> {
 /// Deletes the flag file / 删除标记文件
 #[tauri::command]
 async fn unmark_launched(app: AppHandle) -> Result<(), String> {
-    let flag_path = get_data_dir(&app).join("launched.flag");
+    let flag_path = get_data_dir(&app).map_err(|e| e.to_string())?.join("launched.flag");
     if flag_path.exists() {
         std::fs::remove_file(&flag_path).map_err(|e| e.to_string())?;
     }
@@ -1033,7 +1023,7 @@ pub fn run() {
         // Setup application / 设置应用
         .setup(|app| {
             // Create data directory / 创建数据目录
-            let data_dir = get_data_dir(app.handle());
+            let data_dir = get_data_dir(app.handle()).expect("Failed to resolve data directory");
             std::fs::create_dir_all(&data_dir).expect("Failed to create data directory");
 
             // Initialize logging / 初始化日志
@@ -1041,16 +1031,17 @@ pub fn run() {
                 error!("Failed to setup logging: {}", e);
             }
 
-            // Initialize database and config manager / 初始化数据库和配置管理器
+            // Initialize database and config manager (single shared connection)
+            // 初始化数据库与配置管理器（共享同一连接，避免 SQLITE_BUSY）
             let db = db::Database::new(&data_dir.join("config.db"))
                 .expect("Failed to initialize database");
-            let config = config::ConfigManager::new(db.clone())
+            let db_arc = Arc::new(Mutex::new(db));
+            let config = config::ConfigManager::new(db_arc.clone())
                 .expect("Failed to initialize config manager");
 
-            // Manage application state / 管理应用状态
             app.manage(AppState {
-                db: Arc::new(Mutex::new(db)),
-                config: Arc::new(Mutex::new(config)),
+                db: db_arc,
+                config,
                 current_hotkey: Arc::new(Mutex::new(None)),
                 window_visible: Arc::new(Mutex::new(true)),
             });
@@ -1062,11 +1053,9 @@ pub fn run() {
             let state = app.state::<AppState>();
             setup_global_shortcut(app.handle(), state);
 
-            // Center window on startup / 启动时将窗口居中
-            if let Some(window) = app.get_webview_window("main") {
-                let _ = update_window_position(&window);
-            }
-
+            // Window is hidden until frontend init completes (visible:false in tauri.conf).
+            // Frontend issues `show_window` after deciding state + persisted size,
+            // which will reposition via `update_window_position`.
             info!("nk-launcher started successfully");
             Ok(())
         })

@@ -138,7 +138,13 @@ const translations: Record<string, TranslationDict> = {
     bg_cleared: "背景图片已清除",
     clear_launched_success: "已清空初次使用状态，即将重启...",
     import_restarting: "配置导入成功，即将重启...",
-    mode_selected: "已选择："
+    mode_selected: "已选择：",
+    jump_to: "跳转到",
+    open_action: "打开",
+    unset: "未设置",
+    edit_grid_with_cmd: "编辑格子 {cmd}",
+    hotkey_register_failed: "⚠ 全局快捷键 {shortcut} 注册失败，可能被其他程序占用",
+    search_settings: "搜索设置"
   },
   en: {
     setting: "Setting",
@@ -251,7 +257,13 @@ const translations: Record<string, TranslationDict> = {
     bg_cleared: "Background image cleared",
     clear_launched_success: "Welcome state cleared, restarting...",
     import_restarting: "Import successful, restarting...",
-    mode_selected: "Selected: "
+    mode_selected: "Selected: ",
+    jump_to: "Go to",
+    open_action: "Open",
+    unset: "Not set",
+    edit_grid_with_cmd: "Edit grid {cmd}",
+    hotkey_register_failed: "⚠ Failed to register global hotkey {shortcut}, may be in use by another program",
+    search_settings: "Search settings"
   },
   ja: {
     setting: "設定",
@@ -364,7 +376,13 @@ const translations: Record<string, TranslationDict> = {
     bg_cleared: "背景をクリアしました",
     clear_launched_success: "初期状態をクリアしました。再起動します...",
     import_restarting: "インポート成功。再起動します...",
-    mode_selected: "選択："
+    mode_selected: "選択：",
+    jump_to: "ジャンプ",
+    open_action: "開く",
+    unset: "未設定",
+    edit_grid_with_cmd: "グリッド {cmd} を編集",
+    hotkey_register_failed: "⚠ グローバルホットキー {shortcut} の登録に失敗しました。他のプログラムが使用中の可能性があります",
+    search_settings: "設定を検索"
   },
 };
 

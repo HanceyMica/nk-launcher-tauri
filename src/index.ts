@@ -95,7 +95,21 @@ export interface AppConfig {
   search_opacity?: number;
   search_width?: number;
   simple_bg_enabled?: boolean;
+  window_sizes?: Partial<Record<WindowState, [number, number]>>;
 }
+
+/**
+ * Window state used for stateful size persistence (#feature-1).
+ * Each state's last user-resized dimensions are saved to global/window_sizes.
+ */
+export type WindowState =
+  | "simple_grid"
+  | "simple_collapsed"
+  | "simple_results"
+  | "expert_collapsed"
+  | "expert_results"
+  | "settings"
+  | "welcome";
 
 /**
  * BrowserInfo - Browser information / 浏览器信息
@@ -238,7 +252,7 @@ function showWelcomeWindow() {
   if (welcomeWindow) welcomeWindow.classList.add("visible");
   if (container) container.style.display = "none";
   if (configWindow) configWindow.classList.remove("visible");
-  invoke("resize_window", { width: 700.0, height: 500.0 });
+  applyState("welcome", 700.0, 500.0);
 }
 
 /**
@@ -259,7 +273,7 @@ function showConfigWindow(targetId: string = "basic-settings") {
   if (welcomeWindow) welcomeWindow.classList.remove("visible");
   if (configWindow) configWindow.classList.add("visible");
   if (container) container.style.display = "none";
-  invoke("resize_window", { width: 700.0, height: 500.0 });
+  applyState("settings", 700.0, 500.0);
   switchSidebar(targetId);
 }
 
@@ -403,11 +417,17 @@ async function loadConfig() {
     }
 
     // Apply blur, opacity, search width settings
-    // 应用模糊、不透明度、搜索框宽度设置
-    const blur = config.bg_blur !== undefined ? config.bg_blur : 20;
-    const opacity = config.bg_opacity !== undefined ? config.bg_opacity : 60;
-    const searchOpacity = config.search_opacity !== undefined ? config.search_opacity : 100;
-    currentSearchWidth = config.search_width !== undefined ? config.search_width : 600.0;
+    // Rust `Option::None` serializes as JSON null (not undefined), so use `??`
+    // to also catch the fresh-DB case where these keys are absent.
+    const blur = config.bg_blur ?? 20;
+    const opacity = config.bg_opacity ?? 60;
+    const searchOpacity = config.search_opacity ?? 100;
+    currentSearchWidth = config.search_width ?? 600.0;
+
+    // Hydrate persisted per-state window sizes (#feature-1).
+    if (config.window_sizes && typeof config.window_sizes === "object") {
+      persistedSizes = config.window_sizes as Partial<Record<WindowState, [number, number]>>;
+    }
 
     // Update CSS custom properties / 更新 CSS 自定义属性
     document.documentElement.style.setProperty("--bg-blur", `${blur}px`);
@@ -416,13 +436,13 @@ async function loadConfig() {
 
     // Expert mode starts collapsed / 专家模式开始时折叠
     if (currentMode === "expert" && collapsed && !settingsVisible) {
-      invoke("resize_window", { width: currentSearchWidth, height: 40.0 });
+      applyState("expert_collapsed", currentSearchWidth, 40.0);
     }
 
     // Setup search width slider / 设置搜索框宽度滑块
     const searchWidthSlider = document.getElementById("search-width-slider") as HTMLInputElement;
     if (searchWidthSlider) {
-      searchWidthSlider.value = config.search_width !== undefined ? config.search_width.toString() : "600";
+      searchWidthSlider.value = (config.search_width ?? 600).toString();
       searchWidthSlider.addEventListener("input", (e) => {
         const val = parseInt((e.target as HTMLInputElement).value);
         currentSearchWidth = val;
@@ -476,9 +496,9 @@ function setCollapsed(collapse: boolean) {
   collapsed = collapse;
   if (collapse) {
     if (currentMode === "simple") {
-      invoke("resize_window", { width: 340.0, height: 40.0 });
+      applyState("simple_collapsed", 340.0, 40.0);
     } else {
-      invoke("resize_window", { width: currentSearchWidth, height: 40.0 });
+      applyState("expert_collapsed", currentSearchWidth, 40.0);
     }
   }
 }
@@ -494,7 +514,11 @@ function setCollapsed(collapse: boolean) {
  * - Simple mode number input (1-9) / 简单模式数字输入（1-9）
  * - Fuzzy search for expert mode / 专家模式模糊搜索
  */
+// Monotonic id ensures only the freshest async search result reaches the DOM,
+// so a fast `b → ba → bd` sequence won't paint stale results. (#4)
+let lastQueryId = 0;
 searchInput?.addEventListener("input", async (e) => {
+  const myId = ++lastQueryId;
   searchQuery = (e.target as HTMLInputElement).value;
   commandMode = searchQuery.startsWith("/");
   selectedIndex = 0;
@@ -514,8 +538,7 @@ searchInput?.addEventListener("input", async (e) => {
         // Direct execute for non-subgrid entries / 直接执行非子网格条目
         collapsed = false;
 
-        // Format action text like "1：跳转到 百度" / 格式化操作文本如 "1：跳转到 百度"
-        const actionText = entry.kind === "website" ? "跳转到" : "打开";
+        const actionText = entry.kind === "website" ? t("jump_to") : t("open_action");
         const formattedEntry = {
           ...entry,
           title: `${searchQuery}：${actionText} ${entry.title}`,
@@ -531,6 +554,7 @@ searchInput?.addEventListener("input", async (e) => {
   } else if (collapsed && searchQuery.length > 0) {
     // Start search, expand if results found / 开始搜索，如有结果则展开
     const results = await searchEntries(searchQuery);
+    if (myId !== lastQueryId) return;
     if (results.length > 0) {
       collapsed = false;
     }
@@ -547,6 +571,7 @@ searchInput?.addEventListener("input", async (e) => {
   } else {
     // Continue search / 继续搜索
     const results = await searchEntries(searchQuery);
+    if (myId !== lastQueryId) return;
     renderResults(results);
   }
 });
@@ -646,7 +671,7 @@ function renderCommandSuggestions() {
   // Resize window to fit results / 调整窗口大小以容纳结果
   const targetWidth = currentMode === "simple" ? 340.0 : currentSearchWidth;
   const height = Math.min(40 + filtered.length * 36, 400);
-  invoke("resize_window", { width: targetWidth, height: height });
+  applyState(currentMode === "simple" ? "simple_results" : "expert_results", targetWidth, height);
 
   // Click handlers for results / 结果的点击处理器
   document.querySelectorAll(".result-item").forEach((item, i) => {
@@ -698,6 +723,56 @@ async function executeCommand(cmd: string) {
 // ============================================================================
 // Utility Functions / 工具函数
 // ============================================================================
+
+/**
+ * Escape HTML special chars before splicing untrusted strings into innerHTML.
+ * 将不受信任的字符串拼接进 innerHTML 前必须转义，避免 imported config 注入脚本。
+ */
+const HTML_ESCAPE_MAP: Record<string, string> = {
+  "&": "&amp;",
+  "<": "&lt;",
+  ">": "&gt;",
+  '"': "&quot;",
+  "'": "&#39;",
+};
+function escapeHtml(value: unknown): string {
+  return String(value ?? "").replace(/[&<>"']/g, (c) => HTML_ESCAPE_MAP[c]);
+}
+
+/**
+ * Debounced resize_window invocation. Many code paths trigger resize on every
+ * keystroke; collapse them into one IPC call ~80ms after the last request.
+ * 多处渲染路径都会触发 resize；统一收敛到 80ms 后单次调用，避免窗口闪烁。
+ */
+let resizeTimer: number | null = null;
+let lastResize = { w: -1, h: -1 };
+function scheduleResize(width: number, height: number) {
+  if (lastResize.w === width && lastResize.h === height) return;
+  lastResize = { w: width, h: height };
+  if (resizeTimer !== null) clearTimeout(resizeTimer);
+  resizeTimer = window.setTimeout(() => {
+    resizeTimer = null;
+    invoke("resize_window", { width, height }).catch(() => {});
+  }, 80);
+}
+
+/**
+ * Stateful resize: tracks current logical state and applies persisted
+ * dimensions when present, falling back to defaults otherwise.
+ * 按状态记忆窗口尺寸：若有持久化值则用，否则落到默认。
+ */
+let currentWindowState: WindowState = "expert_collapsed";
+let persistedSizes: Partial<Record<WindowState, [number, number]>> = {};
+let lastProgrammaticSize: { w: number; h: number } | null = null;
+
+function applyState(state: WindowState, defaultW: number, defaultH: number) {
+  currentWindowState = state;
+  const persisted = persistedSizes[state];
+  const w = persisted?.[0] ?? defaultW;
+  const h = persisted?.[1] ?? defaultH;
+  lastProgrammaticSize = { w, h };
+  scheduleResize(w, h);
+}
 
 /**
  * Download JSON as file / 将 JSON 下载为文件
@@ -764,7 +839,7 @@ function renderResults(results: Entry[]) {
     } else {
       resultList.innerHTML = "";
       if (currentMode === "simple" && searchQuery) {
-        invoke("resize_window", { width: 340.0, height: 40.0 });
+        applyState("simple_collapsed", 340.0, 40.0);
       }
     }
     return;
@@ -773,13 +848,14 @@ function renderResults(results: Entry[]) {
   // Resize window to fit results / 调整窗口大小以容纳结果
   const targetWidth = currentMode === "simple" ? 340.0 : currentSearchWidth;
   const height = Math.min(40 + results.length * 36, 400);
-  invoke("resize_window", { width: targetWidth, height: height });
+  applyState(currentMode === "simple" ? "simple_results" : "expert_results", targetWidth, height);
 
-  // Build HTML for results / 构建结果的 HTML
+  // Build HTML for results — every user-supplied string is escaped before splicing.
+  // 构建结果的 HTML，所有用户字段必须经 escapeHtml 转义。
   const html = results.map((entry, i) => {
     const icon = entry.kind === "website" ? `<i class="fa-solid fa-globe"></i>` : `<i class="fa-solid fa-box"></i>`;
     const desc = entry.url || entry.path || "";
-    return `<div class="result-item ${i === selectedIndex ? 'selected' : ''}" data-index="${i}">${icon} ${entry.title}<span class="desc">${desc}</span></div>`;
+    return `<div class="result-item ${i === selectedIndex ? 'selected' : ''}" data-index="${i}">${icon} ${escapeHtml(entry.title)}<span class="desc">${escapeHtml(desc)}</span></div>`;
   }).join("");
 
   resultList.innerHTML = html;
@@ -836,25 +912,27 @@ function updateSelection() {
  */
 function renderSimpleGrid(prefix: string = "") {
   // Resize for grid layout / 为网格布局调整大小
-  invoke("resize_window", { width: 340.0, height: 380.0 });
+  applyState("simple_grid", 340.0, 380.0);
 
   // Build grid HTML / 构建网格 HTML
   let html = `<div id="nine-grid">`;
   for (let i = 1; i <= 9; i++) {
     const cmd = prefix + String(i);
     const entry = entries.find(e => e.command === cmd);
-    const name = entry ? entry.title : "未设置";
+    const name = entry ? entry.title : t("unset");
     let icon = `<i class="fa-solid fa-plus"></i>`;
     if (entry) {
       if (entry.kind === "website") icon = `<i class="fa-solid fa-globe"></i>`;
       else if (entry.kind === "app") icon = `<i class="fa-solid fa-box"></i>`;
       else if (entry.kind === "subgrid") icon = `<i class="fa-solid fa-folder"></i>`;
     }
+    const safeCmd = escapeHtml(cmd);
+    const safeName = escapeHtml(name);
     html += `
-      <div class="grid-item" data-cmd="${cmd}">
+      <div class="grid-item" data-cmd="${safeCmd}">
         <span class="number">${i}</span>
         <span class="icon">${icon}</span>
-        <span class="name" title="${name}">${name}</span>
+        <span class="name" title="${safeName}">${safeName}</span>
       </div>
     `;
   }
@@ -881,8 +959,7 @@ function renderSimpleGrid(prefix: string = "") {
         if (entry && entry.kind !== "subgrid") {
           collapsed = false;
 
-          // Format action text / 格式化操作文本
-          const actionText = entry.kind === "website" ? "跳转到" : "打开";
+          const actionText = entry.kind === "website" ? t("jump_to") : t("open_action");
           const formattedEntry = {
             ...entry,
             title: `${searchQuery}：${actionText} ${entry.title}`,
@@ -922,6 +999,13 @@ function renderSimpleGrid(prefix: string = "") {
 
 /** Cached simple entries for settings / 设置的缓存简单条目 */
 let simpleEntries: Entry[] = [];
+
+/**
+ * AbortController scoped to the currently-open simple-mode edit form.
+ * On every grid-item click we abort the previous form's listeners before
+ * attaching new ones, so `change` listeners cannot accumulate. (#6)
+ */
+let simpleEditListeners: AbortController | null = null;
 
 /**
  * Load and render simple mode entries for settings / 加载并渲染设置中的简单模式条目
@@ -969,14 +1053,14 @@ function renderSimpleSettingsGrid() {
     }
 
     html += `
-      <div class="settings-grid-item" data-cmd="${cmd}">
+      <div class="settings-grid-item" data-cmd="${escapeHtml(cmd)}">
         <div class="settings-grid-item-header">
           <span>${t("grid")} ${i}</span>
           <span class="settings-grid-item-badge ${badgeClass}">${kindBadge}</span>
         </div>
         <div class="settings-grid-item-content">
-          <span class="settings-grid-item-title">${title}</span>
-          <span class="settings-grid-item-desc">${desc}</span>
+          <span class="settings-grid-item-title">${escapeHtml(title)}</span>
+          <span class="settings-grid-item-desc">${escapeHtml(desc)}</span>
         </div>
       </div>
     `;
@@ -997,7 +1081,7 @@ function renderSimpleSettingsGrid() {
       const form = document.getElementById("simple-entry-form");
       const titleEl = document.getElementById("simple-entry-form-title");
       if (form && titleEl) {
-        titleEl.textContent = `编辑格子 ${cmd}`;
+        titleEl.textContent = t("edit_grid_with_cmd").replace("{cmd}", cmd);
         (document.getElementById("simple-cmd") as HTMLInputElement).value = cmd;
         (document.getElementById("simple-title") as HTMLInputElement).value = entry?.title || "";
         (document.getElementById("simple-kind") as HTMLSelectElement).value = entry?.kind || "website";
@@ -1021,9 +1105,14 @@ function renderSimpleSettingsGrid() {
           pathInput.style.display = kindSelect.value === "app" ? "block" : "none";
         };
 
+        // Abort previous form's listeners — addEventListener identity comparison
+        // doesn't help here since each click rebuilds the closure (#6).
+        simpleEditListeners?.abort();
+        simpleEditListeners = new AbortController();
         updateVisibility();
-        kindSelect.removeEventListener("change", updateVisibility);
-        kindSelect.addEventListener("change", updateVisibility);
+        kindSelect.addEventListener("change", updateVisibility, {
+          signal: simpleEditListeners.signal,
+        });
       }
     });
   });
@@ -1037,12 +1126,13 @@ function updateSimpleGridLevelOptions() {
   if (!select) return;
 
   // Build options with main + subgrids / 用 main + 子网格构建选项
-  let html = `<fluent-option value="main">主网格</fluent-option>`;
+  let html = `<fluent-option value="main">${escapeHtml(t("main_grid"))}</fluent-option>`;
 
   // Find all subgrids / 找到所有子网格
   const subgrids = simpleEntries.filter(e => e.kind === "subgrid" && e.command.length === 1);
   subgrids.forEach(sg => {
-    html += `<fluent-option value="${sg.command}">子网格: ${sg.title} (${sg.command})</fluent-option>`;
+    const cmd = escapeHtml(sg.command);
+    html += `<fluent-option value="${cmd}">${escapeHtml(t("subgrid"))}: ${escapeHtml(sg.title)} (${cmd})</fluent-option>`;
   });
 
   select.innerHTML = html;
@@ -1162,15 +1252,19 @@ function renderExpertEntries() {
     if (e.kind === "website") icon = `<i class="fa-solid fa-globe"></i>`;
     else if (e.kind === "app") icon = `<i class="fa-solid fa-box"></i>`;
 
+    const cmd = escapeHtml(e.command);
+    const title = escapeHtml(e.title);
+    const target = escapeHtml(e.url || e.path || t("none"));
+
     return `
     <div class="entry-item-row">
       <div class="entry-item-info">
-        <strong>[${e.command}] ${icon} ${e.title}</strong>
-        <span>${t("type")}: ${t(e.kind)} | ${t("target")}: ${e.url || e.path || t("none")}</span>
+        <strong>[${cmd}] ${icon} ${title}</strong>
+        <span>${t("type")}: ${t(e.kind)} | ${t("target")}: ${target}</span>
       </div>
       <div>
-        <fluent-button class="btn-edit-expert" data-cmd="${e.command}">${t("edit")}</fluent-button>
-        <fluent-button class="btn-delete-expert" data-cmd="${e.command}" style="color: var(--error-color);">${t("delete")}</fluent-button>
+        <fluent-button class="btn-edit-expert" data-cmd="${cmd}">${t("edit")}</fluent-button>
+        <fluent-button class="btn-delete-expert" data-cmd="${cmd}" style="color: var(--error-color);">${t("delete")}</fluent-button>
       </div>
     </div>
   `}).join("");
@@ -1319,6 +1413,7 @@ document.getElementById("lang-select")?.addEventListener("change", async (e) => 
   await invoke("save_config", { key: "global/language", value: lang });
   await updateTrayMenu();
   updateI18nUI();
+  rebuildSettingsSearchIndex();
   const welcomeLangSelect = document.getElementById("welcome-lang-select") as HTMLSelectElement;
   if (welcomeLangSelect) welcomeLangSelect.value = lang;
 });
@@ -1330,6 +1425,7 @@ document.getElementById("welcome-lang-select")?.addEventListener("change", async
   await invoke("save_config", { key: "global/language", value: lang });
   await updateTrayMenu();
   updateI18nUI();
+  rebuildSettingsSearchIndex();
   const langSelect = document.getElementById("lang-select") as HTMLSelectElement;
   if (langSelect) langSelect.value = lang;
 });
@@ -1347,6 +1443,10 @@ document.getElementById("mode-select")?.addEventListener("change", async (e) => 
   await invoke("set_mode", { mode });
   currentMode = mode as "expert" | "simple";
   await loadEntries();
+  // Don't touch the launcher window while settings panel is open — it would
+  // shrink the visible settings window from 700×500 to launcher dimensions.
+  // hideConfigWindow re-renders the launcher in the new mode anyway.
+  if (settingsVisible) return;
   if (currentMode === "simple") {
     collapsed = false;
     renderResults([]);
@@ -1376,11 +1476,8 @@ async function init() {
   // Listen for hotkey register failure / 监听热键注册失败事件
   listen("hotkey-register-failed", (event: any) => {
     const shortcut = event.payload || "Alt+Space";
-    showToast(`⚠ 全局快捷键 ${shortcut} 注册失败，可能被其他程序占用`, true);
+    showToast(t("hotkey_register_failed").replace("{shortcut}", shortcut), true);
   });
-
-  // Set initial window size / 设置初始窗口大小
-  invoke("resize_window", { width: 600.0, height: 40.0 }).catch(() => {});
 
   // Initialize i18n and load data / 初始化 i18n 并加载数据
   await initI18n();
@@ -1405,6 +1502,47 @@ async function init() {
       renderResults([]);
     }
   }
+
+  // Wire user-resize → persist (#feature-1).
+  // 监听用户拖拽改变窗口大小 → 写入对应状态的持久化尺寸。
+  const win = getCurrentWindow();
+  const scaleFactor = await win.scaleFactor();
+  let saveTimer: number | null = null;
+  win.onResized(({ payload }) => {
+    const w = payload.width / scaleFactor;
+    const h = payload.height / scaleFactor;
+    // Skip echoes from our own resize_window calls (within 2px tolerance).
+    // 跳过自己 resize_window 触发的回声事件。
+    if (
+      lastProgrammaticSize &&
+      Math.abs(lastProgrammaticSize.w - w) < 2 &&
+      Math.abs(lastProgrammaticSize.h - h) < 2
+    ) {
+      return;
+    }
+    persistedSizes[currentWindowState] = [w, h];
+    if (saveTimer !== null) clearTimeout(saveTimer);
+    saveTimer = window.setTimeout(() => {
+      saveTimer = null;
+      invoke("save_config", { key: "global/window_sizes", value: persistedSizes }).catch(() => {});
+    }, 400);
+  });
+
+  // Reveal window now that initial state, size, and content are settled.
+  // 全部 init 完成、首帧渲染后再显示窗口，消除 600×40 默认尺寸闪烁。
+  // Flush the debounced resize so the window opens at the correct size,
+  // not the OS default 600×40 (would cause a one-frame flash on show).
+  if (resizeTimer !== null && lastProgrammaticSize) {
+    clearTimeout(resizeTimer);
+    resizeTimer = null;
+    await invoke("resize_window", {
+      width: lastProgrammaticSize.w,
+      height: lastProgrammaticSize.h,
+    }).catch(() => {});
+  }
+  await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+  await win.show();
+  await win.setFocus();
 }
 
 /**
@@ -1432,11 +1570,11 @@ async function initSettingsUI() {
     if (browserSelect) {
       try {
         const browsers = await invoke<BrowserInfo[]>("list_browsers");
-        browserSelect.innerHTML = `<fluent-option value="">${t("system")}</fluent-option>` + browsers.map(b => `<fluent-option value="${b.id}">${b.name}</fluent-option>`).join("");
+        browserSelect.innerHTML = `<fluent-option value="">${escapeHtml(t("system"))}</fluent-option>` + browsers.map(b => `<fluent-option value="${escapeHtml(b.id)}">${escapeHtml(b.name)}</fluent-option>`).join("");
         browserSelect.value = config.default_browser || "";
       } catch (e) {
         console.error("Failed to list browsers:", e);
-        browserSelect.innerHTML = `<fluent-option value="">${t("system")}</fluent-option>`;
+        browserSelect.innerHTML = `<fluent-option value="">${escapeHtml(t("system"))}</fluent-option>`;
       }
 
       browserSelect.addEventListener("change", async (e) => {
@@ -1479,16 +1617,17 @@ async function initSettingsUI() {
           return;
         }
         try {
-          await invoke("add_custom_browser", { name, path });
+          // Backend returns the id of the newly added browser so we don't have to
+          // guess via list ordering. (#11)
+          const newId = await invoke<string>("add_custom_browser", { name, path });
           showToast(t("add_browser_success"));
           customBrowserName.value = "";
           customBrowserPath.value = "";
-          // Refresh browser list / 刷新浏览器列表
           if (browserSelect) {
             const browsers = await invoke<BrowserInfo[]>("list_browsers");
-            browserSelect.innerHTML = `<fluent-option value="">${t("system")}</fluent-option>` + browsers.map(b => `<fluent-option value="${b.id}">${b.name}</fluent-option>`).join("");
-            browserSelect.value = browsers[browsers.length - 1].id;
-            await invoke("save_config", { key: "global/default_browser", value: browserSelect.value });
+            browserSelect.innerHTML = `<fluent-option value="">${escapeHtml(t("system"))}</fluent-option>` + browsers.map(b => `<fluent-option value="${escapeHtml(b.id)}">${escapeHtml(b.name)}</fluent-option>`).join("");
+            browserSelect.value = newId;
+            await invoke("save_config", { key: "global/default_browser", value: newId });
           }
         } catch (e) {
           showToast(String(e), true);
@@ -1631,7 +1770,7 @@ async function initSettingsUI() {
     // Background blur slider / 背景模糊滑块
     const bgBlurSlider = document.getElementById("bg-blur-slider") as HTMLInputElement;
     if (bgBlurSlider) {
-      bgBlurSlider.value = config.bg_blur !== undefined ? config.bg_blur.toString() : "20";
+      bgBlurSlider.value = (config.bg_blur ?? 20).toString();
       bgBlurSlider.addEventListener("input", (e) => {
         const val = (e.target as HTMLInputElement).value;
         document.documentElement.style.setProperty("--bg-blur", `${val}px`);
@@ -1645,7 +1784,7 @@ async function initSettingsUI() {
     // Background opacity slider / 背景不透明度滑块
     const bgOpacitySlider = document.getElementById("bg-opacity-slider") as HTMLInputElement;
     if (bgOpacitySlider) {
-      bgOpacitySlider.value = config.bg_opacity !== undefined ? config.bg_opacity.toString() : "60";
+      bgOpacitySlider.value = (config.bg_opacity ?? 60).toString();
       bgOpacitySlider.addEventListener("input", (e) => {
         const val = (e.target as HTMLInputElement).value;
         document.documentElement.style.setProperty("--bg-opacity", `${parseInt(val) / 100}`);
@@ -1659,7 +1798,7 @@ async function initSettingsUI() {
     // Search opacity slider / 搜索不透明度滑块
     const searchOpacitySlider = document.getElementById("search-opacity-slider") as HTMLInputElement;
     if (searchOpacitySlider) {
-      searchOpacitySlider.value = config.search_opacity !== undefined ? config.search_opacity.toString() : "100";
+      searchOpacitySlider.value = (config.search_opacity ?? 100).toString();
       searchOpacitySlider.addEventListener("input", (e) => {
         const val = (e.target as HTMLInputElement).value;
         document.documentElement.style.setProperty("--search-opacity", `${parseInt(val) / 100}`);
@@ -1705,6 +1844,106 @@ async function initSettingsUI() {
   } catch (e) {
     console.error("Failed to init settings UI:", e);
   }
+  // Settings search is independent of the config-loading pipeline above,
+  // so it stays outside the try/catch — a failure earlier shouldn't kill it.
+  setupSettingsSearch();
+}
+
+// ============================================================================
+// Settings Search / 设置搜索
+// ============================================================================
+
+/**
+ * Index of searchable settings items. Rebuilt on language switch so labels
+ * reflect the current locale. Each entry maps a translated label back to its
+ * containing panel + DOM element, enabling click-to-navigate.
+ * 设置搜索索引 — 语言切换时重建以匹配当前语言。
+ */
+type SettingsSearchEntry = {
+  panelId: string;
+  key: string;
+  label: string;
+  el: HTMLElement;
+};
+let settingsSearchIndex: SettingsSearchEntry[] = [];
+
+function rebuildSettingsSearchIndex() {
+  settingsSearchIndex = [];
+  document.querySelectorAll<HTMLElement>("#config-window .content-panel").forEach((panel) => {
+    panel.querySelectorAll<HTMLElement>(".setting-item").forEach((item) => {
+      const labelEl = item.querySelector<HTMLElement>(".setting-label[data-i18n]");
+      const key = labelEl?.dataset.i18n;
+      if (!key) return;
+      settingsSearchIndex.push({ panelId: panel.id, key, label: t(key), el: item });
+    });
+  });
+}
+
+function setupSettingsSearch() {
+  const searchInput = document.getElementById("settings-search") as HTMLInputElement | null;
+  const dropdown = document.getElementById("settings-search-results");
+  if (!searchInput || !dropdown) return;
+
+  rebuildSettingsSearchIndex();
+
+  const closeDropdown = () => {
+    dropdown.innerHTML = "";
+    dropdown.classList.remove("visible");
+  };
+
+  searchInput.addEventListener("input", () => {
+    const q = searchInput.value.trim().toLowerCase();
+    if (!q) {
+      closeDropdown();
+      return;
+    }
+    const hits = settingsSearchIndex
+      .filter((e) => e.label.toLowerCase().includes(q))
+      .slice(0, 10);
+    if (hits.length === 0) {
+      closeDropdown();
+      return;
+    }
+    dropdown.innerHTML = hits
+      .map(
+        (h, i) =>
+          `<div class="settings-search-item" data-idx="${i}">${escapeHtml(h.label)}</div>`,
+      )
+      .join("");
+    dropdown.classList.add("visible");
+
+    dropdown.querySelectorAll<HTMLElement>(".settings-search-item").forEach((node, i) => {
+      node.addEventListener("click", () => {
+        const hit = hits[i];
+        if (!hit) return;
+        switchSidebar(hit.panelId);
+        // Defer scrollIntoView until panel becomes active (display change settles).
+        // 延后到面板切换完成再滚动 + 高亮。
+        setTimeout(() => {
+          hit.el.scrollIntoView({ behavior: "smooth", block: "center" });
+          hit.el.classList.add("settings-search-flash");
+          setTimeout(() => hit.el.classList.remove("settings-search-flash"), 1500);
+        }, 50);
+        searchInput.value = "";
+        closeDropdown();
+      });
+    });
+  });
+
+  // Close on blur (with small delay so dropdown click registers first).
+  // 失焦关闭，留 150ms 给 dropdown click 事件冒泡。
+  searchInput.addEventListener("blur", () => {
+    setTimeout(closeDropdown, 150);
+  });
+
+  // Close on Escape.
+  searchInput.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      searchInput.value = "";
+      closeDropdown();
+      searchInput.blur();
+    }
+  });
 }
 
 /**

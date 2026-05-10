@@ -71,6 +71,11 @@ body {
   user-select: none;
 }
 
+/* Fluent UI Components overrides / Fluent UI 组件覆盖 */
+fluent-option {
+  padding-left: 12px; /* Fix text overlapping with selection indicator / 修复文字被选中指示器遮挡的问题 */
+}
+
 /* ============================================================================
    Main Container / 主容器
    ============================================================================ */
@@ -81,13 +86,13 @@ body {
  * Uses backdrop-filter for Windows 10/11 acrylic compatibility
  */
 #container {
-  background: rgba(var(--bg-primary-rgb), calc(0.75 * var(--search-opacity)));
+  background: rgba(var(--bg-primary-rgb), var(--bg-opacity));
   border: 1px solid var(--border-color);
   border-radius: 8px;
   overflow: hidden;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15);
-  backdrop-filter: blur(30px); /* Acrylic effect / 亚克力效果 */
-  -webkit-backdrop-filter: blur(30px);
+  backdrop-filter: blur(var(--bg-blur));
+  -webkit-backdrop-filter: blur(var(--bg-blur));
   display: flex;
   flex-direction: column;
   width: 100vw;
@@ -133,7 +138,7 @@ body {
   align-items: center;
   padding: 0 12px;
   height: 40px;
-  background: transparent;
+  background: rgba(var(--bg-primary-rgb), var(--search-opacity));
 }
 
 /* Drag handle for window movement / 用于窗口移动的拖动句柄 */
@@ -349,7 +354,7 @@ body {
   border-bottom: 1px solid var(--border-color);
   -webkit-app-region: drag;
   user-select: none;
-  z-index: 1;
+  z-index: 10;
 }
 
 .titlebar-left {
@@ -374,6 +379,7 @@ body {
   display: flex;
   justify-content: center;
   padding: 0 20px;
+  position: relative;
 }
 
 .titlebar-search {
@@ -387,6 +393,48 @@ body {
   padding: 0 12px;
   outline: none;
   -webkit-app-region: no-drag;
+}
+
+/* Settings search dropdown / 设置搜索结果下拉 */
+.settings-search-dropdown {
+  position: absolute;
+  top: 40px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 100%;
+  max-width: 400px;
+  max-height: 320px;
+  overflow-y: auto;
+  background: rgba(var(--bg-secondary-rgb), 0.97);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+  display: none;
+  z-index: 100;
+  -webkit-app-region: no-drag;
+}
+.settings-search-dropdown.visible { display: block; }
+
+.settings-search-item {
+  padding: 10px 14px;
+  cursor: pointer;
+  color: var(--text-primary);
+  font-size: 14px;
+  border-bottom: 1px solid var(--border-color);
+  -webkit-app-region: no-drag;
+}
+.settings-search-item:last-child { border-bottom: none; }
+.settings-search-item:hover { background: var(--bg-hover); }
+
+@keyframes settings-search-flash {
+  0%, 100% { background: transparent; }
+  30%      { background: rgba(0, 120, 212, 0.25); }
+}
+.settings-search-flash {
+  animation: settings-search-flash 1.5s ease-out;
+  border-radius: 4px;
 }
 
 .titlebar-right {

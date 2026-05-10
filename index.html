@@ -25,8 +25,9 @@
         <img src="/src-tauri/icons/32x32.png" class="titlebar-icon" />
         <span class="titlebar-title" data-i18n="setting">设置</span>
       </div>
-      <div class="titlebar-center">
-        <input type="text" class="titlebar-search" placeholder="" />
+      <div class="titlebar-center" data-tauri-drag-region="false">
+        <input type="text" id="settings-search" class="titlebar-search" placeholder="" data-i18n-placeholder="search_settings" data-tauri-drag-region="false" />
+        <div id="settings-search-results" class="settings-search-dropdown" data-tauri-drag-region="false"></div>
       </div>
       <div class="titlebar-right">
         <div class="titlebar-btn" id="btn-minimize"><i class="fa-solid fa-minus"></i></div>

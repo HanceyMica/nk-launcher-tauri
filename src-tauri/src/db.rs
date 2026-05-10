@@ -193,21 +193,3 @@ impl Database {
     }
 }
 
-/// Clone implementation for Database / Database 的克隆实现
-/// Opens a new connection to the same database file
-/// 打开到同一数据库文件的新连接
-/// # Note
-/// - Uses SQLITE_OPEN_READ_WRITE | SQLITE_OPEN_CREATE flags
-/// - 如果源连接仅读，则会失败
-impl Clone for Database {
-    fn clone(&self) -> Self {
-        Self {
-            conn: Connection::open_with_flags(
-                self.conn.path().unwrap(),
-                rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE
-                    | rusqlite::OpenFlags::SQLITE_OPEN_CREATE,
-            )
-            .expect("Failed to reopen database"),
-        }
-    }
-}
