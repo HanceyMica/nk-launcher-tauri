@@ -123,12 +123,12 @@ impl ConfigManager {
     /// # Returns
     /// - Result<AppConfig, AppError>: Full app config with defaults for missing values
     /// # Note
-    /// - Missing keys return default values: version="0.1.0", mode="expert", theme="system", language="zh"
+    /// - Missing keys return default values: version="0.1.5", mode="expert", theme="system", language="zh"
     pub fn get_all(&self) -> Result<AppConfig, AppError> {
         Ok(AppConfig {
             version: self
                 .get_str("global/version")
-                .unwrap_or_else(|_| "0.1.0".to_string()),
+                .unwrap_or_else(|_| "0.1.5".to_string()),
             mode: self
                 .get_str("global/mode")
                 .unwrap_or_else(|_| "expert".to_string()),
@@ -155,7 +155,7 @@ impl ConfigManager {
     /// - Result<String, AppError>: JSON string in format:
     ///   ```json
     ///   {
-    ///     "version": "0.1.0",
+    ///     "version": "0.1.5",
     ///     "kv": [["namespace", "key", "value"], ...],
     ///     "entries": { "namespace": [{ "command": "", "kind": "", "title": "", "url": null, "path": null }, ...], ... }
     ///   }
@@ -195,7 +195,7 @@ impl ConfigManager {
         }
 
         let export = serde_json::json!({
-            "version": "0.1.0",
+            "version": "0.1.5",
             "kv": kv,
             "entries": entries_map
         });
@@ -383,7 +383,7 @@ mod tests {
             .unwrap();
 
         let json = manager.export_json().unwrap();
-        assert!(json.contains("\"version\": \"0.1.0\""));
+        assert!(json.contains("\"version\": \"0.1.5\""));
         assert!(json.contains("global"));
     }
 }
