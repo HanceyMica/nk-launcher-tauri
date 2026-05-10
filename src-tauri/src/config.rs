@@ -36,6 +36,7 @@ pub struct AppConfig {
     pub search_opacity: Option<i64>,
     pub search_width: Option<f64>,
     pub simple_bg_enabled: Option<bool>,
+    pub mode_interop_enabled: Option<bool>,
     pub window_sizes: Option<serde_json::Value>,
 }
 
@@ -146,6 +147,7 @@ impl ConfigManager {
             search_opacity: self.get("global/search_opacity").ok().and_then(|v| v.as_i64()),
             search_width: self.get("global/search_width").ok().and_then(|v| v.as_f64()),
             simple_bg_enabled: self.get("global/simple_bg_enabled").ok().and_then(|v| v.as_bool()),
+            mode_interop_enabled: self.get("global/mode_interop_enabled").ok().and_then(|v| v.as_bool()),
             window_sizes: self.get("global/window_sizes").ok(),
         })
     }
@@ -325,6 +327,7 @@ mod tests {
             title: "百度".to_string(),
             url: Some("https://www.baidu.com".to_string()),
             path: None,
+            namespace: None,
         }];
 
         // Exact command match / 精确 command 匹配
@@ -347,6 +350,7 @@ mod tests {
             title: "yy".to_string(),
             url: Some("https://github.com/foo".to_string()),
             path: None,
+            namespace: None,
         }];
         let result = fuzzy_search("github", entries);
         assert!(!result.is_empty(), "url-only match must produce a hit");
@@ -362,6 +366,7 @@ mod tests {
             title: "百度".to_string(),
             url: Some("https://www.baidu.com".to_string()),
             path: None,
+            namespace: None,
         }];
 
         // Chinese character match / 中文字符匹配

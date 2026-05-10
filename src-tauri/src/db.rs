@@ -27,6 +27,12 @@ pub struct Entry {
     pub title: String,
     pub url: Option<String>,
     pub path: Option<String>,
+    /// Origin namespace, stamped on read by `Database::get_entries`.
+    /// Persists through `fuzzy_search` round-trips so the frontend can
+    /// distinguish cross-namespace results when mode interop is on.
+    /// Ignored on writes — `save_entry` uses the explicit `namespace` arg.
+    #[serde(default)]
+    pub namespace: Option<String>,
 }
 
 // ============================================================================
@@ -101,6 +107,7 @@ impl Database {
                     title: row.get(2)?,
                     url: row.get(3)?,
                     path: row.get(4)?,
+                    namespace: Some(namespace.to_string()),
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;

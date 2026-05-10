@@ -65,6 +65,10 @@ export interface Entry {
   title: string;
   url?: string;
   path?: string;
+  /** Origin namespace stamped by the Rust `get_entries` command.
+   *  Survives `fuzzy_search` round-trips. May be null for entries
+   *  constructed before this field was introduced. */
+  namespace?: string | null;
 }
 
 /**
@@ -95,6 +99,7 @@ export interface AppConfig {
   search_opacity?: number;
   search_width?: number;
   simple_bg_enabled?: boolean;
+  mode_interop_enabled?: boolean;
   window_sizes?: Partial<Record<WindowState, [number, number]>>;
 }
 
@@ -160,6 +165,12 @@ let currentSearchWidth = 600.0;
 
 /** Simple mode grid level: "main" or "1"-"9" subgrid / 简单模式网格级别："main" 或 "1"-"9" 子网格 */
 let currentSimpleGridLevel = "main";
+
+/** Mode interop enabled flag / 模式互通启用标志 */
+let modeInteropEnabled = false;
+
+/** Cross-namespace entries for mode interop / 用于模式互通的跨命名空间条目 */
+let crossEntries: Entry[] = [];
 
 // ============================================================================
 // DOM Element References / DOM 元素引用
@@ -433,6 +444,8 @@ async function loadConfig() {
       delete document.body.dataset.simpleBg;
     }
 
+    modeInteropEnabled = config.mode_interop_enabled === true;
+
     // Apply blur, opacity, search width settings
     // Rust `Option::None` serializes as JSON null (not undefined), so use `??`
     // to also catch the fresh-DB case where these keys are absent.
@@ -489,6 +502,17 @@ async function loadEntries() {
     console.error("Failed to load entries:", e);
     entries = [];
   }
+  crossEntries = [];
+  if (modeInteropEnabled) {
+    const otherNamespace = currentMode === "expert" ? "simple" : "expert";
+    try {
+      crossEntries = (await invoke<Entry[]>("get_entries", { namespace: otherNamespace }))
+        .filter(e => e.kind !== "subgrid");
+    } catch (e) {
+      console.error("Failed to load cross entries:", e);
+    }
+  }
+  resetConflictToast();
 }
 
 /**
@@ -498,7 +522,30 @@ async function loadEntries() {
  */
 async function searchEntries(query: string): Promise<Entry[]> {
   if (!query.trim()) return [];
-  return await invoke<Entry[]>("fuzzy_search", { query, entries });
+  const allEntries = modeInteropEnabled
+    ? deduplicateEntries(entries, crossEntries)
+    : entries;
+  return await invoke<Entry[]>("fuzzy_search", { query, entries: allEntries });
+}
+
+let conflictToastShown = false;
+
+/**
+ * Clear the once-per-session conflict toast guard so a fresh state
+ * change (mode switch, interop toggle, query reset) can re-surface it.
+ */
+function resetConflictToast() {
+  conflictToastShown = false;
+}
+
+function deduplicateEntries(primary: Entry[], secondary: Entry[]): Entry[] {
+  const primaryCommands = new Set(primary.map(e => e.command));
+  const conflicts = secondary.filter(e => primaryCommands.has(e.command));
+  if (conflicts.length > 0 && !conflictToastShown) {
+    conflictToastShown = true;
+    showToast(t("mode_interop_conflict"));
+  }
+  return [...primary, ...secondary.filter(e => !primaryCommands.has(e.command))];
 }
 
 // ============================================================================
@@ -578,6 +625,7 @@ searchInput?.addEventListener("input", async (e) => {
     renderResults(results);
   } else if (!searchQuery) {
     // Empty query: show grid or collapse / 空查询：显示网格或折叠
+    resetConflictToast();
     if (currentMode === "simple") {
       collapsed = false;
       renderSimpleGrid();
@@ -614,14 +662,16 @@ searchInput?.addEventListener("keydown", async (e) => {
       }
     } else {
       const results = await searchEntries(searchQuery);
-      if (results[selectedIndex]) {
-        await executeEntry(results[selectedIndex]);
+      const target = results[selectedIndex];
+      if (target) {
+        await executeEntry(target);
       }
     }
 
     // Clear search after execution / 执行后清空搜索
     searchQuery = "";
     searchInput.value = "";
+    resetConflictToast();
     if (settingsVisible) {
       return;
     }
@@ -646,6 +696,7 @@ searchInput?.addEventListener("keydown", async (e) => {
     } else {
       searchQuery = "";
       searchInput.value = "";
+      resetConflictToast();
       if (currentMode === "simple") {
         collapsed = false;
         renderResults([]);
@@ -655,6 +706,12 @@ searchInput?.addEventListener("keydown", async (e) => {
       }
     }
   }
+});
+
+searchInput?.addEventListener("contextmenu", (e) => {
+  e.preventDefault();
+  e.stopPropagation();
+  showContextMenu(buildSearchInputContextItems(), (e as MouseEvent).clientX, (e as MouseEvent).clientY);
 });
 
 // ============================================================================
@@ -751,7 +808,43 @@ const HTML_ESCAPE_MAP: Record<string, string> = {
   "'": "&#39;",
 };
 function escapeHtml(value: unknown): string {
-  return String(value ?? "").replace(/[&<>"']/g, (c) => HTML_ESCAPE_MAP[c]);
+  return String(value ?? "").replace(/[&<>"']/g, (c) => HTML_ESCAPE_MAP[c] ?? c);
+}
+
+/**
+ * Parse a textual hotkey like "Ctrl+Shift+K" or "alt + space".
+ * Accepts the same modifier aliases the Rust register_hotkey command does
+ * (CTRL/CONTROL → Ctrl, WIN/META/SUPER/CMD → Win, etc.).
+ * Returns null if the string can't form a valid modifier(s) + single-key combo.
+ */
+function parseHotkeyString(input: string): { modifiers: string[]; key: string } | null {
+  const parts = input.split("+").map(p => p.trim()).filter(Boolean);
+  if (parts.length < 2) return null;
+
+  const modAliases: Record<string, string> = {
+    CTRL: "Ctrl", CONTROL: "Ctrl",
+    ALT: "Alt", OPTION: "Alt",
+    SHIFT: "Shift",
+    WIN: "Win", META: "Win", SUPER: "Win", CMD: "Win", COMMAND: "Win",
+  };
+
+  const mods: string[] = [];
+  let key: string | null = null;
+  for (const part of parts) {
+    const upper = part.toUpperCase();
+    const norm = modAliases[upper];
+    if (norm) {
+      if (!mods.includes(norm)) mods.push(norm);
+    } else {
+      // The trigger key — must be unique and is the only non-modifier token.
+      if (key !== null) return null;
+      key = part;
+    }
+  }
+  if (!key || mods.length === 0) return null;
+  // Normalize a few common key aliases to what the Rust side expects.
+  const k = key.toUpperCase();
+  return { modifiers: mods, key: k === "SPACEBAR" ? "Space" : key };
 }
 
 /**
@@ -914,7 +1007,8 @@ function renderResults(results: Entry[]) {
   const html = results.map((entry, i) => {
     const icon = entry.kind === "website" ? `<i class="fa-solid fa-globe"></i>` : `<i class="fa-solid fa-box"></i>`;
     const desc = entry.url || entry.path || "";
-    return `<div class="result-item ${i === selectedIndex ? 'selected' : ''}" data-index="${i}">${icon} ${escapeHtml(entry.title)}<span class="desc">${escapeHtml(desc)}</span></div>`;
+    const ns = entry.namespace ?? "";
+    return `<div class="result-item ${i === selectedIndex ? 'selected' : ''}" data-index="${i}" data-cmd="${escapeHtml(entry.command)}" data-namespace="${escapeHtml(ns)}">${icon} ${escapeHtml(entry.title)}<span class="desc">${escapeHtml(desc)}</span></div>`;
   }).join("");
 
   resultList.innerHTML = html;
@@ -926,7 +1020,7 @@ function renderResults(results: Entry[]) {
       updateSelection();
     });
     item.addEventListener("click", async () => {
-      let results = [];
+      let results: Entry[] = [];
       if (currentMode === "simple" && /^[1-9]{1,2}$/.test(searchQuery)) {
         const entry = entries.find(e => e.command === searchQuery);
         if (entry && entry.kind !== "subgrid") {
@@ -936,8 +1030,9 @@ function renderResults(results: Entry[]) {
         results = await searchEntries(searchQuery);
       }
 
-      if (results[i]) {
-        await executeEntry(results[i]);
+      const target = results[i];
+      if (target) {
+        await executeEntry(target);
         searchQuery = "";
         searchInput.value = "";
         if (currentMode === "simple") {
@@ -1056,6 +1151,34 @@ function renderSimpleGrid(prefix: string = "") {
 
 // ============================================================================
 // Settings: Simple Mode / 设置：简单模式
+
+// Context menu on grid items / search results (delegated) / 网格项 / 搜索结果右键菜单（委托）
+resultList?.addEventListener("contextmenu", (e) => {
+  const me = e as MouseEvent;
+  const gridTarget = (e.target as HTMLElement).closest(".grid-item") as HTMLElement | null;
+  if (gridTarget) {
+    e.preventDefault();
+    e.stopPropagation();
+    const cmd = gridTarget.getAttribute("data-cmd") || "";
+    const entry = entries.find(x => x.command === cmd);
+    showContextMenu(buildSimpleGridContextItems(cmd, entry), me.clientX, me.clientY);
+    return;
+  }
+  const resultTarget = (e.target as HTMLElement).closest(".result-item") as HTMLElement | null;
+  if (resultTarget) {
+    e.preventDefault();
+    e.stopPropagation();
+    const cmd = resultTarget.getAttribute("data-cmd") || "";
+    const ns = resultTarget.getAttribute("data-namespace") || "";
+    // Look across the union — search results may include cross-namespace
+    // entries when mode interop is on.
+    const pool = [...entries, ...crossEntries];
+    const entry = pool.find(x => x.command === cmd && (x.namespace ?? "") === ns);
+    if (entry) {
+      showContextMenu(buildResultItemContextItems(entry), me.clientX, me.clientY);
+    }
+  }
+});
 // ============================================================================
 
 /** Cached simple entries for settings / 设置的缓存简单条目 */
@@ -1416,6 +1539,423 @@ function setupExpertSettingsUI() {
 }
 
 // ============================================================================
+// Context Menu / 右键菜单
+// ============================================================================
+
+interface ContextMenuItem {
+  label: string;
+  action: (() => void) | null;
+  disabled?: boolean;
+  separator?: boolean;
+  submenu?: ContextMenuItem[];
+}
+
+let contextMenuVisible = false;
+let contextMenuDismissAbort: AbortController | null = null;
+
+function hideContextMenu() {
+  const menu = document.getElementById("context-menu");
+  if (menu) {
+    menu.style.display = "none";
+    menu.innerHTML = "";
+  }
+  contextMenuVisible = false;
+  contextMenuDismissAbort?.abort();
+  contextMenuDismissAbort = null;
+}
+
+function showContextMenu(items: ContextMenuItem[], x: number, y: number) {
+  const menu = document.getElementById("context-menu");
+  if (!menu) return;
+
+  // Build HTML and action list in a single pass so data-action-idx and
+  // actionList stay 1:1 — including a no-op slot for parents-with-submenu.
+  const actionList: Array<() => void> = [];
+  let html = "";
+
+  for (const item of items) {
+    if (item.separator) {
+      html += '<div class="context-menu-separator"></div>';
+      continue;
+    }
+    const hasSubmenu = !!(item.submenu && item.submenu.length > 0);
+    const disabledClass = item.disabled ? " disabled" : "";
+    const subClass = hasSubmenu ? " has-submenu" : "";
+    const arrow = hasSubmenu ? ' <span class="submenu-arrow">&#9654;</span>' : "";
+    const idx = actionList.length;
+    actionList.push(item.action ?? (() => {}));
+    html += `<div class="context-menu-item${disabledClass}${subClass}" data-action-idx="${idx}">${escapeHtml(item.label)}${arrow}`;
+    if (hasSubmenu) {
+      html += '<div class="context-submenu">';
+      for (const sub of item.submenu!) {
+        const subIdx = actionList.length;
+        actionList.push(sub.action ?? (() => {}));
+        html += `<div class="context-menu-item" data-action-idx="${subIdx}">${escapeHtml(sub.label)}</div>`;
+      }
+      html += '</div>';
+    }
+    html += '</div>';
+  }
+
+  menu.innerHTML = html;
+  menu.style.display = "block";
+
+  const menuRect = menu.getBoundingClientRect();
+  let left = x;
+  let top = y;
+  if (x + menuRect.width > window.innerWidth) left = window.innerWidth - menuRect.width - 4;
+  if (y + menuRect.height > window.innerHeight) top = window.innerHeight - menuRect.height - 4;
+  menu.style.left = left + "px";
+  menu.style.top = top + "px";
+
+  contextMenuVisible = true;
+
+  // Auto-dismiss on window blur or any scroll. Use AbortController so the
+  // listeners are removed exactly once on hideContextMenu.
+  contextMenuDismissAbort?.abort();
+  contextMenuDismissAbort = new AbortController();
+  const signal = contextMenuDismissAbort.signal;
+  window.addEventListener("blur", hideContextMenu, { signal });
+  document.addEventListener("scroll", hideContextMenu, { capture: true, signal });
+
+  menu.querySelectorAll("[data-action-idx]").forEach((el) => {
+    el.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if ((el as HTMLElement).classList.contains("disabled")) {
+        hideContextMenu();
+        return;
+      }
+      hideContextMenu();
+      const idx = parseInt(el.getAttribute("data-action-idx") || "-1");
+      const action = actionList[idx];
+      if (action) action();
+    });
+  });
+
+  // ----- Keyboard navigation -----
+  type Slot = { el: HTMLElement; subEls: HTMLElement[]; hasSub: boolean };
+  const topEls = Array.from(menu.querySelectorAll<HTMLElement>(":scope > .context-menu-item"));
+  const slots: Slot[] = topEls.map(el => ({
+    el,
+    subEls: Array.from(el.querySelectorAll<HTMLElement>(":scope > .context-submenu > .context-menu-item")),
+    hasSub: el.classList.contains("has-submenu"),
+  }));
+  let focusedTop = -1;
+  let openSubIdx = -1;
+  let focusedSub = -1;
+
+  function clearTopFocus() {
+    for (const s of slots) s.el.classList.remove("focused");
+  }
+  function clearSubFocus() {
+    const open = openSubIdx >= 0 ? slots[openSubIdx] : undefined;
+    if (!open) return;
+    for (const se of open.subEls) se.classList.remove("focused");
+  }
+  function focusTop(start: number, dir: 1 | -1) {
+    if (slots.length === 0) return;
+    for (let step = 0; step < slots.length; step++) {
+      const idx = ((start + step * dir) % slots.length + slots.length) % slots.length;
+      const slot = slots[idx];
+      if (slot && !slot.el.classList.contains("disabled")) {
+        clearTopFocus();
+        focusedTop = idx;
+        slot.el.classList.add("focused");
+        return;
+      }
+    }
+  }
+  function focusSub(start: number, dir: 1 | -1) {
+    const open = openSubIdx >= 0 ? slots[openSubIdx] : undefined;
+    if (!open || open.subEls.length === 0) return;
+    const subEls = open.subEls;
+    for (let step = 0; step < subEls.length; step++) {
+      const idx = ((start + step * dir) % subEls.length + subEls.length) % subEls.length;
+      const sub = subEls[idx];
+      if (sub && !sub.classList.contains("disabled")) {
+        clearSubFocus();
+        focusedSub = idx;
+        sub.classList.add("focused");
+        return;
+      }
+    }
+  }
+  function openSubmenu(i: number) {
+    const slot = slots[i];
+    if (!slot || !slot.hasSub || slot.subEls.length === 0) return;
+    openSubIdx = i;
+    slot.el.classList.add("submenu-active");
+    focusedSub = -1;
+    focusSub(0, 1);
+  }
+  function closeSubmenu() {
+    const open = openSubIdx >= 0 ? slots[openSubIdx] : undefined;
+    if (!open) return;
+    clearSubFocus();
+    open.el.classList.remove("submenu-active");
+    openSubIdx = -1;
+    focusedSub = -1;
+  }
+  function activate() {
+    if (openSubIdx >= 0 && focusedSub >= 0) {
+      const open = slots[openSubIdx];
+      const sub = open?.subEls[focusedSub];
+      sub?.click();
+      return;
+    }
+    if (focusedTop >= 0) {
+      const slot = slots[focusedTop];
+      if (!slot) return;
+      if (slot.hasSub) openSubmenu(focusedTop);
+      else slot.el.click();
+    }
+  }
+
+  // Capture-phase listener so we preempt the search input's own arrow/Enter
+  // handlers while the menu is open.
+  document.addEventListener("keydown", (ev) => {
+    if (!contextMenuVisible) return;
+    switch (ev.key) {
+      case "ArrowDown":
+        ev.preventDefault();
+        ev.stopPropagation();
+        if (openSubIdx >= 0) focusSub(focusedSub < 0 ? 0 : focusedSub + 1, 1);
+        else focusTop(focusedTop < 0 ? 0 : focusedTop + 1, 1);
+        break;
+      case "ArrowUp":
+        ev.preventDefault();
+        ev.stopPropagation();
+        if (openSubIdx >= 0) {
+          const subLen = slots[openSubIdx]?.subEls.length ?? 0;
+          focusSub(focusedSub < 0 ? subLen - 1 : focusedSub - 1, -1);
+        } else {
+          focusTop(focusedTop < 0 ? slots.length - 1 : focusedTop - 1, -1);
+        }
+        break;
+      case "ArrowRight":
+        if (openSubIdx < 0 && focusedTop >= 0 && slots[focusedTop]?.hasSub) {
+          ev.preventDefault();
+          ev.stopPropagation();
+          openSubmenu(focusedTop);
+        }
+        break;
+      case "ArrowLeft":
+        if (openSubIdx >= 0) {
+          ev.preventDefault();
+          ev.stopPropagation();
+          closeSubmenu();
+        }
+        break;
+      case "Enter":
+        ev.preventDefault();
+        ev.stopPropagation();
+        activate();
+        break;
+      case "Escape":
+        // Preempt searchInput's Escape (which would clear the query).
+        // The menu is dismissed below; stopPropagation prevents the
+        // bubble-phase clearing path from running.
+        ev.preventDefault();
+        ev.stopPropagation();
+        hideContextMenu();
+        break;
+    }
+  }, { capture: true, signal });
+}
+
+/**
+ * Open simple-settings panel and focus the editor for `cmd`.
+ * Awaits the async grid re-render so the click target is the freshly
+ * rendered node, not a stale one from a prior session.
+ */
+async function jumpToSimpleEntryEditor(cmd: string) {
+  const level = cmd.length === 2 ? cmd.charAt(0) : "main";
+  showConfigWindow("simple-settings");
+  if (currentSimpleGridLevel !== level) {
+    currentSimpleGridLevel = level;
+  }
+  await loadAndRenderSimpleEntries();
+  const sel = `.settings-grid-item[data-cmd="${CSS.escape(cmd)}"]`;
+  (document.querySelector(sel) as HTMLElement | null)?.click();
+}
+
+/**
+ * Open expert-settings panel and focus the editor for `cmd`.
+ */
+async function jumpToExpertEntryEditor(cmd: string) {
+  showConfigWindow("expert-settings");
+  await loadAndRenderExpertEntries();
+  const sel = `.btn-edit-expert[data-cmd="${CSS.escape(cmd)}"]`;
+  (document.querySelector(sel) as HTMLElement | null)?.click();
+}
+
+/**
+ * Dispatch to the right editor based on the entry's origin namespace.
+ */
+async function jumpToEntryEditor(entry: Entry) {
+  if (entry.namespace === "expert") {
+    await jumpToExpertEntryEditor(entry.command);
+  } else {
+    await jumpToSimpleEntryEditor(entry.command);
+  }
+}
+
+function buildSimpleGridContextItems(cmd: string, entry: Entry | undefined): ContextMenuItem[] {
+  const items: ContextMenuItem[] = [];
+
+  if (entry) {
+    if (entry.kind === "subgrid") {
+      items.push({
+        label: t("rename"),
+        action: () => { void jumpToSimpleEntryEditor(cmd); },
+      });
+      items.push({
+        label: t("delete"),
+        action: async () => {
+          await invoke("delete_entry", { namespace: "simple", key: cmd });
+          for (let i = 1; i <= 9; i++) {
+            await invoke("delete_entry", { namespace: "simple", key: cmd + String(i) });
+          }
+          showToast(t("delete_entry_success"));
+          await loadEntries();
+          if (currentMode === "simple") renderSimpleGrid(currentSimpleGridLevel === "main" ? "" : currentSimpleGridLevel);
+        },
+      });
+      items.push({ label: "", action: null, separator: true });
+      items.push({
+        label: t("copy_grid_name"),
+        action: () => navigator.clipboard.writeText(entry.title).then(() => showToast(t("copy_success"))).catch(() => showToast(t("copy_failed"), true)),
+      });
+    } else {
+      items.push({
+        label: t("modify"),
+        action: () => { void jumpToSimpleEntryEditor(cmd); },
+      });
+      items.push({
+        label: t("delete"),
+        action: async () => {
+          await invoke("delete_entry", { namespace: "simple", key: cmd });
+          showToast(t("delete_entry_success"));
+          await loadEntries();
+          if (currentMode === "simple") renderSimpleGrid(currentSimpleGridLevel === "main" ? "" : currentSimpleGridLevel);
+        },
+      });
+      items.push({ label: "", action: null, separator: true });
+      items.push({
+        label: t("copy_title"),
+        action: () => navigator.clipboard.writeText(entry.title).then(() => showToast(t("copy_success"))).catch(() => showToast(t("copy_failed"), true)),
+      });
+      if (entry.kind === "website" && entry.url) {
+        items.push({
+          label: t("copy_link"),
+          action: () => navigator.clipboard.writeText(entry.url!).then(() => showToast(t("copy_success"))).catch(() => showToast(t("copy_failed"), true)),
+        });
+      } else if (entry.kind === "app" && entry.path) {
+        items.push({
+          label: t("copy_app_path"),
+          action: () => navigator.clipboard.writeText(entry.path!).then(() => showToast(t("copy_success"))).catch(() => showToast(t("copy_failed"), true)),
+        });
+      }
+    }
+  } else {
+    items.push({
+      label: t("add_new_entry"),
+      action: () => { void jumpToSimpleEntryEditor(cmd); },
+    });
+  }
+
+  return items;
+}
+
+function buildSearchInputContextItems(): ContextMenuItem[] {
+  const input = document.getElementById("search-input") as HTMLInputElement;
+  const hasText = !!(input && input.value.length > 0);
+
+  return [
+    {
+      label: t("copy"),
+      disabled: !hasText,
+      action: hasText ? () => navigator.clipboard.writeText(input.value).then(() => showToast(t("copy_success"))).catch(() => showToast(t("copy_failed"), true)) : null,
+    },
+    {
+      label: t("paste"),
+      action: () => {
+        navigator.clipboard.readText().then(text => {
+          input.value = text;
+          searchQuery = text;
+          input.dispatchEvent(new Event("input"));
+        }).catch(() => showToast(t("copy_failed"), true));
+      },
+    },
+    {
+      label: t("delete"),
+      disabled: !hasText,
+      action: hasText
+        ? () => {
+            input.value = "";
+            searchQuery = "";
+            input.dispatchEvent(new Event("input"));
+          }
+        : null,
+    },
+    { label: "", action: null, separator: true },
+    {
+      label: t("commands"),
+      action: null,
+      submenu: [
+        { label: t("setting"), action: () => showConfigWindow("basic-settings") },
+        { label: t("dark"), action: async () => { await invoke("save_config", { key: "global/theme", value: "dark" }); applyTheme("dark"); } },
+        { label: t("light"), action: async () => { await invoke("save_config", { key: "global/theme", value: "light" }); applyTheme("light"); } },
+        { label: t("system"), action: async () => { await invoke("save_config", { key: "global/theme", value: "system" }); applyTheme("system"); } },
+        { label: t("import"), action: () => importConfigFromFile() },
+        { label: t("export"), action: () => exportConfigToFile() },
+        { label: t("about"), action: () => showConfigWindow("about-settings") },
+      ],
+    },
+  ];
+}
+
+function buildResultItemContextItems(entry: Entry): ContextMenuItem[] {
+  const items: ContextMenuItem[] = [
+    {
+      label: t("modify"),
+      action: () => { void jumpToEntryEditor(entry); },
+    },
+    {
+      label: t("delete"),
+      action: async () => {
+        const ns = entry.namespace ?? (currentMode === "expert" ? "expert" : "simple");
+        await invoke("delete_entry", { namespace: ns, key: entry.command });
+        showToast(t("delete_entry_success"));
+        await loadEntries();
+        // Refresh visible results so the deleted entry disappears at once.
+        if (searchQuery) {
+          const results = await searchEntries(searchQuery);
+          renderResults(results);
+        }
+      },
+    },
+    { label: "", action: null, separator: true },
+    {
+      label: t("copy_title"),
+      action: () => navigator.clipboard.writeText(entry.title).then(() => showToast(t("copy_success"))).catch(() => showToast(t("copy_failed"), true)),
+    },
+  ];
+  if (entry.kind === "website" && entry.url) {
+    items.push({
+      label: t("copy_link"),
+      action: () => navigator.clipboard.writeText(entry.url!).then(() => showToast(t("copy_success"))).catch(() => showToast(t("copy_failed"), true)),
+    });
+  } else if (entry.kind === "app" && entry.path) {
+    items.push({
+      label: t("copy_app_path"),
+      action: () => navigator.clipboard.writeText(entry.path!).then(() => showToast(t("copy_success"))).catch(() => showToast(t("copy_failed"), true)),
+    });
+  }
+  return items;
+}
+
+// ============================================================================
 // Global Click Handler / 全局点击处理
 // ============================================================================
 
@@ -1425,6 +1965,9 @@ function setupExpertSettingsUI() {
  * 外部点击隐藏窗口。无边框透明窗口的投影/边框区域点击目标是 body/html → 跳过。
  */
 document.addEventListener("click", (e) => {
+  if (contextMenuVisible) {
+    hideContextMenu();
+  }
   const target = e.target as Node;
   if (!document.contains(target)) return;
   // Clicks on document root / body fall on transparent window chrome of a
@@ -1445,6 +1988,10 @@ document.addEventListener("click", (e) => {
  */
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") {
+    if (contextMenuVisible) {
+      hideContextMenu();
+      return;
+    }
     if (settingsVisible) {
       hideConfigWindow();
     } else {
@@ -1710,6 +2257,7 @@ async function initSettingsUI() {
 
     // Hotkey input / 热键输入
     const hotkeyInput = document.getElementById("hotkey-input") as HTMLInputElement;
+    const btnApplyHotkey = document.getElementById("btn-apply-hotkey");
     if (hotkeyInput) {
       hotkeyInput.value = config.shortcut || "Alt+Space";
 
@@ -1718,10 +2266,11 @@ async function initSettingsUI() {
       hotkeyInput.addEventListener("focus", () => { hotkeyInputFocused = true; });
       hotkeyInput.addEventListener("blur", () => { hotkeyInputFocused = false; });
 
+      // Chord capture: while focused, a modifier+key combo is captured and
+      // applied immediately. Plain typing falls through so the user can also
+      // edit the field as text and commit via the Apply button / Enter.
       document.addEventListener("keydown", async (e) => {
         if (!hotkeyInputFocused) return;
-        e.preventDefault();
-        e.stopPropagation();
 
         const mods: string[] = [];
         if (e.ctrlKey) mods.push("Ctrl");
@@ -1733,25 +2282,52 @@ async function initSettingsUI() {
         if (key === " ") key = "Space";
         if (key === "Control" || key === "Alt" || key === "Shift" || key === "Meta") return;
 
-        if (mods.length === 0) return;
+        // No modifier held → let the keystroke edit the text field normally
+        // (typing, Backspace, arrow keys, etc.). Enter without modifiers is
+        // handled below as "apply current text".
+        if (mods.length === 0) {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            e.stopPropagation();
+            await applyHotkeyFromInput();
+          }
+          return;
+        }
+
+        e.preventDefault();
+        e.stopPropagation();
 
         const shortcutStr = [...mods, key.toUpperCase()].join("+");
+        await commitHotkey(mods, key, shortcutStr);
+      });
 
+      async function commitHotkey(mods: string[], key: string, shortcutStr: string) {
         try {
           const isConflict = await invoke<boolean>("check_hotkey_conflict", { modifiers: mods, key });
           if (isConflict) {
             showToast(t("hotkey_conflict"), true);
             return;
           }
-
           hotkeyInput.value = shortcutStr;
           await invoke("register_hotkey", { modifiers: mods, key });
           await invoke("save_config", { key: "global/shortcut", value: shortcutStr });
           showToast(t("hotkey_updated"));
-        } catch (err) {
+        } catch {
           showToast(t("hotkey_conflict"), true);
         }
-      });
+      }
+
+      async function applyHotkeyFromInput() {
+        const parsed = parseHotkeyString(hotkeyInput.value);
+        if (!parsed) {
+          showToast(t("invalid_hotkey"), true);
+          return;
+        }
+        const shortcutStr = [...parsed.modifiers, parsed.key.toUpperCase()].join("+");
+        await commitHotkey(parsed.modifiers, parsed.key, shortcutStr);
+      }
+
+      btnApplyHotkey?.addEventListener("click", () => { void applyHotkeyFromInput(); });
     }
 
     // Background image upload / 背景图片上传
@@ -1869,6 +2445,26 @@ async function initSettingsUI() {
         const enabled = e.target.checked === true;
         await invoke("save_config", { key: "global/simple_bg_enabled", value: enabled });
         applySimpleBg(enabled);
+        showToast(t("save_success"));
+      });
+    }
+
+    // Mode interop toggle / 模式互通开关
+    const modeInteropCheckbox = document.getElementById("mode-interop-checkbox") as any;
+    if (modeInteropCheckbox) {
+      modeInteropCheckbox.checked = config.mode_interop_enabled === true;
+      modeInteropEnabled = config.mode_interop_enabled === true;
+      modeInteropCheckbox.addEventListener("change", async (e: any) => {
+        const enabled = e.target.checked === true;
+        await invoke("save_config", { key: "global/mode_interop_enabled", value: enabled });
+        modeInteropEnabled = enabled;
+        await loadEntries();
+        // Refresh visible results so the toggle takes effect immediately
+        // for an in-flight query, not just on the next keystroke.
+        if (searchQuery) {
+          const results = await searchEntries(searchQuery);
+          renderResults(results);
+        }
         showToast(t("save_success"));
       });
     }

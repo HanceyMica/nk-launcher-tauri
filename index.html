@@ -18,6 +18,7 @@
       <input id="search-input" type="text" placeholder="输入搜索..." data-i18n-placeholder="search_placeholder" autocomplete="off" spellcheck="false" />
     </div>
     <div id="result-list"></div>
+    <div id="context-menu" class="context-menu" style="display:none;"></div>
   </div>
   <div id="config-window">
     <div class="config-titlebar" data-tauri-drag-region>
@@ -44,7 +45,7 @@
         <div class="sidebar-item" data-target="about-settings" data-i18n="about">关于</div>
         <div class="sidebar-footer">
           <p>Version : 0.1.5</p>
-          <p>Build: 202605102104-015</p>
+          <p>Build: 202605110108-015</p>
         </div>
       </div>
       <div class="main-content">
@@ -81,7 +82,17 @@
             </div>
             <div class="setting-item">
               <span class="setting-label" data-i18n="hotkey">快捷键</span>
-              <fluent-text-field id="hotkey-input" placeholder="Alt+Space" readonly></fluent-text-field>
+              <div class="hotkey-row">
+                <fluent-text-field id="hotkey-input" placeholder="Alt+Space"></fluent-text-field>
+                <fluent-button id="btn-apply-hotkey" appearance="accent" data-i18n="apply">应用</fluent-button>
+              </div>
+            </div>
+            <div class="setting-item">
+              <div>
+                <span class="setting-label" data-i18n="mode_interop_enabled">模式互通</span>
+                <div class="setting-label-desc" data-i18n="mode_interop_enabled_desc">允许简单与专家模式互相识别并执行对方的启动项</div>
+              </div>
+              <fluent-checkbox id="mode-interop-checkbox"></fluent-checkbox>
             </div>
             <div class="setting-item">
               <span class="setting-label" data-i18n="config_management">配置管理</span>
@@ -188,7 +199,10 @@
               <input type="range" id="search-width-slider" min="300" max="1000" value="600" step="10" class="setting-slider" />
             </div>
             <div class="setting-item">
-              <span class="setting-label" data-i18n="simple_bg_enabled">简单模式下应用设置背景</span>
+              <div>
+                <span class="setting-label" data-i18n="simple_bg_enabled">主界面应用设置背景</span>
+                <div class="setting-label-desc" data-i18n="simple_bg_enabled_desc">控制主界面（包括简单与专家模式）是否应用自定义背景</div>
+              </div>
               <fluent-checkbox id="simple-bg-checkbox"></fluent-checkbox>
             </div>
           </div>
