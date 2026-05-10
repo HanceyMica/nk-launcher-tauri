@@ -150,13 +150,14 @@ impl ConfigManager {
         })
     }
 
-    /// Export all config as JSON string / 将所有配置导出为 JSON 字符串
+    /// Export all config AND entries as JSON string / 将所有配置和条目导出为 JSON 字符串
     /// # Returns
     /// - Result<String, AppError>: JSON string in format:
     ///   ```json
     ///   {
     ///     "version": "0.1.0",
-    ///     "kv": [["namespace", "key", "value"], ...]
+    ///     "kv": [["namespace", "key", "value"], ...],
+    ///     "entries": { "namespace": [{ "command": "", "kind": "", "title": "", "url": null, "path": null }, ...], ... }
     ///   }
     ///   ```
     pub fn export_json(&self) -> Result<String, AppError> {
@@ -164,13 +165,9 @@ impl ConfigManager {
         let kv: Vec<[String; 3]> = all_config
             .into_iter()
             .map(|(k, v)| {
-                // Split key by first '/' to get namespace and key name
-                // 按第一个 '/' 分割键以获取命名空间和键名
                 let parts: Vec<&str> = k.splitn(2, '/').collect();
                 let ns = parts.get(0).unwrap_or(&"global");
                 let key_str = k.as_str();
-                // If there's a second part, use it as key; otherwise use full key
-                // 如果有第二部分，用它作为键；否则使用完整键
                 let key = parts
                     .get(1)
                     .map(|s| s.to_string())
@@ -179,20 +176,40 @@ impl ConfigManager {
             })
             .collect();
 
+        // Export entries from both expert and simple namespaces
+        let expert_entries = self.db.lock().get_entries("expert")?;
+        let simple_entries = self.db.lock().get_entries("simple")?;
+
+        let mut entries_map = serde_json::Map::new();
+        if !expert_entries.is_empty() {
+            entries_map.insert(
+                "expert".to_string(),
+                serde_json::to_value(&expert_entries).map_err(|e| AppError::Config(format!("Failed to serialize expert entries: {}", e)))?,
+            );
+        }
+        if !simple_entries.is_empty() {
+            entries_map.insert(
+                "simple".to_string(),
+                serde_json::to_value(&simple_entries).map_err(|e| AppError::Config(format!("Failed to serialize simple entries: {}", e)))?,
+            );
+        }
+
         let export = serde_json::json!({
             "version": "0.1.0",
-            "kv": kv
+            "kv": kv,
+            "entries": entries_map
         });
 
         serde_json::to_string_pretty(&export)
             .map_err(|e| AppError::Config(format!("Failed to export: {}", e)))
     }
 
-    /// Import config from JSON string / 从 JSON 字符串导入配置
+    /// Import config AND entries from JSON string / 从 JSON 字符串导入配置和条目
     /// # Arguments
     /// - json: JSON string from export_json / export_json 导出的 JSON 字符串
     /// # Side Effects
     /// - Overwrites existing config with INSERT OR REPLACE / 用 INSERT OR REPLACE 覆盖现有配置
+    /// - Imports entries into expert and simple namespaces / 导入条目到 expert 和 simple 命名空间
     pub fn import_json(&self, json: &str) -> Result<(), AppError> {
         let data: serde_json::Value = serde_json::from_str(json)
             .map_err(|e| AppError::Config(format!("Invalid JSON: {}", e)))?;
@@ -214,6 +231,19 @@ impl ConfigManager {
             };
 
             db.set_config(&full_key, value)?;
+        }
+
+        // Import entries if present in the JSON
+        if let Some(entries_obj) = data["entries"].as_object() {
+            for (namespace, entries_arr) in entries_obj {
+                if let Some(arr) = entries_arr.as_array() {
+                    for entry_val in arr {
+                        let entry: Entry = serde_json::from_value(entry_val.clone())
+                            .map_err(|e| AppError::Config(format!("Failed to parse entry: {}", e)))?;
+                        db.save_entry(namespace, &entry)?;
+                    }
+                }
+            }
         }
 
         Ok(())
