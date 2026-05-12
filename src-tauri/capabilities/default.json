@@ -26,6 +26,10 @@
     "dialog:allow-save",
     "dialog:allow-open",
     "core:window:allow-set-min-size",
-    "core:window:allow-set-skip-taskbar"
+    "core:window:allow-set-skip-taskbar",
+    "core:window:allow-start-dragging",
+    "core:window:allow-internal-toggle-maximize",
+    "log:default",
+    "opener:allow-open-path"
   ]
 }

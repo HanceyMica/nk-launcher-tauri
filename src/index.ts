@@ -130,6 +130,128 @@ export interface BrowserInfo {
 }
 
 // ============================================================================
+// Diagnostics: frontend logger + window drag fallback
+// 诊断：前端日志 + 窗口拖拽回退
+// ============================================================================
+
+/**
+ * Frontend logger — forwards messages to the Rust-side `frontend_log` command
+ * so they land in the same rotating `nk-launcher.log` file as backend logs.
+ * Console output is always kept; backend forwarding is best-effort and silent
+ * on failure to avoid recursive logging.
+ *
+ * 前端日志：转发到 Rust 端 `frontend_log`，与后端日志写入同一份滚动日志文件，
+ * 便于现场排查（"本机正常 / 别机异常"这种问题最需要这种统一日志）。
+ */
+type LogLevel = "trace" | "debug" | "info" | "warn" | "error";
+
+function consoleSink(level: LogLevel, msg: string, extra: unknown) {
+  // console output stays available for live-debugging via the WebView devtools
+  const fn = level === "error" ? console.error
+           : level === "warn"  ? console.warn
+           : level === "debug" || level === "trace" ? console.debug
+           : console.log;
+  if (extra !== undefined) fn(`[${level}] ${msg}`, extra);
+  else fn(`[${level}] ${msg}`);
+}
+
+function fmtExtra(extra: unknown): string {
+  if (extra === undefined) return "";
+  if (extra instanceof Error) return ` | ${extra.name}: ${extra.message}${extra.stack ? "\n" + extra.stack : ""}`;
+  try { return " | " + JSON.stringify(extra); } catch { return " | [unserializable]"; }
+}
+
+export const flog = {
+  log(level: LogLevel, msg: string, extra?: unknown, source = "index") {
+    consoleSink(level, msg, extra);
+    // Best-effort: never await, never throw. The fallback Tauri command exists
+    // before the window is shown so most log calls succeed.
+    invoke("frontend_log", { level, message: msg + fmtExtra(extra), source })
+      .catch(() => { /* ignore — already on console */ });
+  },
+  trace: (m: string, x?: unknown) => flog.log("trace", m, x),
+  debug: (m: string, x?: unknown) => flog.log("debug", m, x),
+  info:  (m: string, x?: unknown) => flog.log("info",  m, x),
+  warn:  (m: string, x?: unknown) => flog.log("warn",  m, x),
+  error: (m: string, x?: unknown) => flog.log("error", m, x),
+};
+
+// Catch anything we don't explicitly handle. These run before `init()` so even
+// crashes during early boot get captured.
+// 全局错误捕获 — 在 init() 之前注册，连早期初始化错误也能写入日志。
+window.addEventListener("error", (e) => {
+  flog.error(
+    `window.onerror: ${e.message} @ ${e.filename}:${e.lineno}:${e.colno}`,
+    e.error
+  );
+});
+window.addEventListener("unhandledrejection", (e) => {
+  flog.error("unhandledrejection", e.reason);
+});
+
+/**
+ * Install an explicit window-drag handler. Background: on machines with
+ * older / locked-down WebView2 builds, Tauri's `data-tauri-drag-region`
+ * injection sometimes never attaches (the runtime mousedown listener never
+ * fires) — so the title bar appears dead even though the app otherwise works.
+ *
+ * This fallback listens for mousedown on the same elements and invokes the
+ * Rust-side `manual_start_dragging` command directly. We attach with
+ * `{ capture: true }` so we run *before* Tauri's document-level listener;
+ * the backend command is idempotent — at worst we trigger drag twice, which
+ * the OS coalesces.
+ *
+ * 显式窗口拖拽兜底：某些机器的 WebView2 版本不支持 Tauri 注入的 drag.js，
+ * 导致标题栏完全不能拖动。这里在相同元素上挂自己的 mousedown 监听，
+ * 直接调用 Rust 的 manual_start_dragging。capture 模式确保比 Tauri 的
+ * document 监听更早执行；后端命令幂等，重复触发也无害。
+ */
+function setupDragFallback() {
+  const dragTargets: Element[] = [
+    document.getElementById("drag-handle"),
+    ...Array.from(document.querySelectorAll(".config-titlebar")),
+  ].filter((el): el is Element => el !== null);
+
+  if (dragTargets.length === 0) {
+    flog.warn("setupDragFallback: no drag targets found in DOM");
+    return;
+  }
+
+  const NO_DRAG_TAGS = new Set(["INPUT", "TEXTAREA", "BUTTON", "SELECT", "LABEL", "A"]);
+
+  const handler = (ev: Event) => {
+    const e = ev as MouseEvent;
+    if (e.button !== 0) return;                  // left click only
+    if (e.detail > 1) return;                    // ignore double-click (maximize)
+
+    const target = e.target as HTMLElement | null;
+    if (!target) return;
+
+    // Respect explicit no-drag opt-outs anywhere up the path.
+    // (e.g. `data-tauri-drag-region="false"` on title bar buttons / inputs)
+    if (target.closest('[data-tauri-drag-region="false"]')) return;
+    // Skip interactive children — buttons, inputs etc. own their own clicks.
+    if (NO_DRAG_TAGS.has(target.tagName)) return;
+    if (target.closest("button, input, textarea, select, a, [role='button']")) return;
+    // .titlebar-btn elements are <div>s in this app (not <button>), so add an
+    // explicit class-based bail-out — otherwise future buttons added without
+    // remembering data-tauri-drag-region="false" silently break (#close-btn-bug).
+    if (target.closest(".titlebar-btn, .no-drag")) return;
+    if ((target as HTMLElement).isContentEditable) return;
+
+    e.preventDefault();
+    invoke("manual_start_dragging").catch((err) => {
+      flog.error("manual_start_dragging failed", err);
+    });
+  };
+
+  for (const el of dragTargets) {
+    el.addEventListener("mousedown", handler, { capture: true });
+  }
+  flog.info(`drag fallback installed on ${dragTargets.length} element(s)`);
+}
+
+// ============================================================================
 // Global State / 全局状态
 // ============================================================================
 
@@ -523,7 +645,7 @@ async function loadEntries() {
 async function searchEntries(query: string): Promise<Entry[]> {
   if (!query.trim()) return [];
   const allEntries = modeInteropEnabled
-    ? deduplicateEntries(entries, crossEntries)
+    ? mergeAcrossNamespaces(entries, crossEntries)
     : entries;
   return await invoke<Entry[]>("fuzzy_search", { query, entries: allEntries });
 }
@@ -538,14 +660,24 @@ function resetConflictToast() {
   conflictToastShown = false;
 }
 
-function deduplicateEntries(primary: Entry[], secondary: Entry[]): Entry[] {
+/**
+ * Plan A: when mode interop is on, present BOTH primary and cross-namespace
+ * entries to the user even when their `command` collides. The user disambiguates
+ * via the namespace chip rendered on each `.result-item`. The toast becomes
+ * informational ("N keys are shared across modes") rather than a "we silently
+ * dropped one" warning.
+ */
+function mergeAcrossNamespaces(primary: Entry[], secondary: Entry[]): Entry[] {
   const primaryCommands = new Set(primary.map(e => e.command));
-  const conflicts = secondary.filter(e => primaryCommands.has(e.command));
-  if (conflicts.length > 0 && !conflictToastShown) {
+  const sharedKeys = secondary
+    .filter(e => primaryCommands.has(e.command))
+    .map(e => e.command);
+  if (sharedKeys.length > 0 && !conflictToastShown) {
     conflictToastShown = true;
-    showToast(t("mode_interop_conflict"));
+    const sample = Array.from(new Set(sharedKeys)).slice(0, 3).join(", ");
+    showToast(t("mode_interop_shared_keys").replace("{keys}", sample));
   }
-  return [...primary, ...secondary.filter(e => !primaryCommands.has(e.command))];
+  return [...primary, ...secondary];
 }
 
 // ============================================================================
@@ -1008,7 +1140,14 @@ function renderResults(results: Entry[]) {
     const icon = entry.kind === "website" ? `<i class="fa-solid fa-globe"></i>` : `<i class="fa-solid fa-box"></i>`;
     const desc = entry.url || entry.path || "";
     const ns = entry.namespace ?? "";
-    return `<div class="result-item ${i === selectedIndex ? 'selected' : ''}" data-index="${i}" data-cmd="${escapeHtml(entry.command)}" data-namespace="${escapeHtml(ns)}">${icon} ${escapeHtml(entry.title)}<span class="desc">${escapeHtml(desc)}</span></div>`;
+    // When mode interop is on, every result carries a namespace chip so a
+    // user looking at e.g. two results both labelled "1" can tell them apart.
+    let nsChip = "";
+    if (modeInteropEnabled && ns) {
+      const label = ns === "expert" ? t("ns_chip_expert") : t("ns_chip_simple");
+      nsChip = `<span class="ns-chip ns-chip-${escapeHtml(ns)}">${escapeHtml(label)}</span>`;
+    }
+    return `<div class="result-item ${i === selectedIndex ? 'selected' : ''}" data-index="${i}" data-cmd="${escapeHtml(entry.command)}" data-namespace="${escapeHtml(ns)}">${nsChip}${icon} ${escapeHtml(entry.title)}<span class="desc">${escapeHtml(desc)}</span></div>`;
   }).join("");
 
   resultList.innerHTML = html;
@@ -2073,6 +2212,20 @@ document.getElementById("mode-select")?.addEventListener("change", async (e) => 
  * 设置事件监听器、加载配置、如果是首次启动则显示欢迎
  */
 async function init() {
+  flog.info("frontend init() start");
+
+  // Install drag fallback ASAP so the title bar is dragable even if later
+  // init steps throw — the failure mode this fixes manifests as "title bar
+  // looks fine but does nothing on click".
+  // 尽早安装拖拽兜底：即便后续 init 抛错，标题栏依然可拖动。
+  setupDragFallback();
+
+  // Mirror backend runtime info into the unified log so triage starts with
+  // one timeline (versions, paths, webview build) instead of two files.
+  invoke("get_runtime_info")
+    .then((info) => flog.info("runtime info", info))
+    .catch((err) => flog.warn("get_runtime_info failed", err));
+
   const { listen } = await import("@tauri-apps/api/event");
 
   // Listen for show-settings event from tray / 监听来自托盘的 show-settings 事件
@@ -2159,6 +2312,7 @@ async function init() {
   await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
   await win.show();
   await win.setFocus();
+  flog.info("frontend init() done; window shown");
 }
 
 /**

@@ -229,6 +229,28 @@ fluent-option {
   max-width: 200px;
 }
 
+/* Namespace chip on search results when mode interop is on */
+.ns-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  color: #fff;
+  flex-shrink: 0;
+}
+.ns-chip-expert {
+  background: #2c7be5;
+}
+.ns-chip-simple {
+  background: #29a69a;
+}
+
 /* Command mode hint bar / 命令模式提示栏 */
 .command-hint {
   color: var(--text-secondary);

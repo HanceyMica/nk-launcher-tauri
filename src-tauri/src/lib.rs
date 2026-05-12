@@ -2,7 +2,7 @@
 //! Handles window management, tray, global shortcuts, and all Tauri commands
 //! 处理窗口管理、托盘、全局快捷键及所有 Tauri 命令
 
-use log::{error, info};
+use log::{error, info, warn};
 use parking_lot::Mutex;
 use std::io::Write;
 use std::path::PathBuf;
@@ -13,6 +13,7 @@ use tauri::{
     AppHandle, Emitter, Manager, State, WebviewWindow,
 };
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
+use tauri_plugin_log::{RotationStrategy, Target, TargetKind};
 
 mod browser;
 mod config;
@@ -59,7 +60,15 @@ fn get_log_dir(app: &AppHandle) -> Result<PathBuf, AppError> {
 /// Write error message to daily rotating log file / 将错误信息写入按日滚动的日志文件
 /// File format: error-YYYY-MM-DD.txt / 文件格式：error-YYYY-MM-DD.txt
 /// Used for crash diagnostics and debugging / 用于崩溃诊断和调试
+///
+/// Also routes through `log::error!` so the entry shows up in the unified
+/// `nk-launcher.log` written by tauri-plugin-log — the old plain-text file
+/// is kept as a redundant fallback in case the structured logger is unavailable.
 fn write_error_log(app: &AppHandle, message: &str) {
+    // Mirror to the structured logger first; this hits stdout (dev) and
+    // `nk-launcher.log` (release) when the plugin is initialised.
+    error!("{}", message);
+
     let log_dir = match get_log_dir(app) {
         Ok(d) => d,
         Err(e) => {
@@ -198,14 +207,26 @@ fn toggle_window_visibility(app: &AppHandle) {
 
     if let Some(window) = app.get_webview_window("main") {
         if *visible {
-            let _ = window.hide();
+            if let Err(e) = window.hide() {
+                warn!("toggle_window_visibility: hide failed: {}", e);
+            }
             *visible = false;
+            log::debug!("toggle_window_visibility -> hidden");
         } else {
-            let _ = window.show();
-            let _ = window.set_focus();
-            let _ = update_window_position(&window);
+            if let Err(e) = window.show() {
+                warn!("toggle_window_visibility: show failed: {}", e);
+            }
+            if let Err(e) = window.set_focus() {
+                warn!("toggle_window_visibility: set_focus failed: {}", e);
+            }
+            if let Err(e) = update_window_position(&window) {
+                warn!("toggle_window_visibility: position update failed: {}", e);
+            }
             *visible = true;
+            log::debug!("toggle_window_visibility -> visible");
         }
+    } else {
+        warn!("toggle_window_visibility: 'main' window not found");
     }
 }
 
@@ -916,9 +937,20 @@ async fn quit_app(app: AppHandle) -> Result<(), String> {
 #[tauri::command]
 async fn show_window(app: AppHandle) -> Result<(), String> {
     if let Some(window) = app.get_webview_window("main") {
-        let _ = window.show();
-        let _ = window.set_focus();
-        update_window_position(&window).map_err(|e| e.to_string())?;
+        if let Err(e) = window.show() {
+            warn!("show_window: show failed: {}", e);
+        }
+        if let Err(e) = window.set_focus() {
+            warn!("show_window: set_focus failed: {}", e);
+        }
+        update_window_position(&window).map_err(|e| {
+            let msg = e.to_string();
+            warn!("show_window: position update failed: {}", msg);
+            msg
+        })?;
+        log::debug!("show_window completed");
+    } else {
+        warn!("show_window: 'main' window not found");
     }
     Ok(())
 }
@@ -927,7 +959,12 @@ async fn show_window(app: AppHandle) -> Result<(), String> {
 #[tauri::command]
 async fn hide_window(app: AppHandle) -> Result<(), String> {
     if let Some(window) = app.get_webview_window("main") {
-        let _ = window.hide();
+        if let Err(e) = window.hide() {
+            warn!("hide_window: hide failed: {}", e);
+        }
+        log::debug!("hide_window completed");
+    } else {
+        warn!("hide_window: 'main' window not found");
     }
     Ok(())
 }
@@ -1023,10 +1060,115 @@ async fn resize_window(width: f64, height: f64, app: AppHandle) -> Result<(), St
                 width: width,
                 height: height,
             }))
-            .map_err(|e| e.to_string())?;
-        update_window_position(&window).map_err(|e| e.to_string())?;
+            .map_err(|e| {
+                let msg = e.to_string();
+                error!("resize_window: set_size failed ({}x{}): {}", width, height, msg);
+                msg
+            })?;
+        update_window_position(&window).map_err(|e| {
+            let msg = e.to_string();
+            error!("resize_window: position update failed: {}", msg);
+            msg
+        })?;
+        log::trace!("resize_window {}x{}", width, height);
+    } else {
+        warn!("resize_window: 'main' window not found");
     }
     Ok(())
+}
+
+// ============================================================================
+// Tauri Commands: Diagnostics / Tauri 命令：诊断与日志
+// ============================================================================
+
+/// Allow the frontend to emit log entries that land in the same file as Rust logs.
+/// 让前端可以写入和 Rust 端同一份日志文件，便于现场调试。
+/// `level` accepts: "trace", "debug", "info", "warn", "error" (case-insensitive).
+#[tauri::command]
+async fn frontend_log(level: String, message: String, source: Option<String>) -> Result<(), String> {
+    let src = source.as_deref().unwrap_or("frontend");
+    match level.to_ascii_lowercase().as_str() {
+        "trace" => log::trace!(target: "frontend", "[{}] {}", src, message),
+        "debug" => log::debug!(target: "frontend", "[{}] {}", src, message),
+        "warn" | "warning" => warn!(target: "frontend", "[{}] {}", src, message),
+        "error" => error!(target: "frontend", "[{}] {}", src, message),
+        _ => info!(target: "frontend", "[{}] {}", src, message),
+    }
+    Ok(())
+}
+
+/// Manual window drag — used as a safety net by the frontend when the
+/// `data-tauri-drag-region` injection misbehaves (e.g. on machines with older
+/// WebView2 builds). Calling this directly avoids the script-injection path.
+#[tauri::command]
+async fn manual_start_dragging(window: tauri::Window) -> Result<(), String> {
+    let label = window.label().to_string();
+    window.start_dragging().map_err(|e| {
+        let msg = format!("start_dragging failed on '{}': {}", label, e);
+        error!("{}", msg);
+        msg
+    })?;
+    log::debug!("manual_start_dragging on '{}'", label);
+    Ok(())
+}
+
+/// Return the log directory path so the frontend can show it / 打开按钮等。
+#[tauri::command]
+async fn get_log_dir_path(app: AppHandle) -> Result<String, String> {
+    let dir = get_log_dir(&app).map_err(|e| e.to_string())?;
+    Ok(dir.to_string_lossy().into_owned())
+}
+
+/// Reveal the log directory in the OS file manager.
+#[tauri::command]
+async fn open_log_dir(app: AppHandle) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    let dir = get_log_dir(&app).map_err(|e| e.to_string())?;
+    // Best effort: ensure the directory exists before revealing it.
+    let _ = std::fs::create_dir_all(&dir);
+    let path_str = dir.to_string_lossy().into_owned();
+    app.opener()
+        .open_path(&path_str, None::<&str>)
+        .map_err(|e| {
+            let msg = format!("open_log_dir failed for '{}': {}", path_str, e);
+            error!("{}", msg);
+            msg
+        })
+}
+
+/// Snapshot of useful runtime info — meant for the about/diagnostics panel
+/// or to be logged at startup.
+#[derive(serde::Serialize)]
+pub struct RuntimeInfo {
+    pub app_version: String,
+    pub tauri_version: String,
+    pub os: String,
+    pub arch: String,
+    pub data_dir: String,
+    pub log_dir: String,
+    pub webview_version: Option<String>,
+}
+
+#[tauri::command]
+async fn get_runtime_info(app: AppHandle) -> Result<RuntimeInfo, String> {
+    let data_dir = get_data_dir(&app)
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let log_dir = get_log_dir(&app)
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_default();
+
+    let webview_version = tauri::webview_version().ok();
+
+    Ok(RuntimeInfo {
+        app_version: env!("CARGO_PKG_VERSION").to_string(),
+        tauri_version: tauri::VERSION.to_string(),
+        os: std::env::consts::OS.to_string(),
+        arch: std::env::consts::ARCH.to_string(),
+        data_dir,
+        log_dir,
+        webview_version,
+    })
 }
 
 // ============================================================================
@@ -1049,9 +1191,36 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        // Structured logger: writes to stdout, the per-platform log dir
+        // (Windows: %LOCALAPPDATA%\<bundle id>\logs\nk-launcher.log) and the
+        // WebView console so frontend devtools mirror runtime logs.
+        // 结构化日志：同时写入 stdout、平台日志目录的 nk-launcher.log，以及 WebView 控制台。
         .plugin(
             tauri_plugin_log::Builder::default()
                 .level(log::LevelFilter::Info)
+                // Stay verbose for our own crates so we don't have to bump the
+                // global level (which would flood with library logs).
+                .level_for("app_lib", log::LevelFilter::Debug)
+                .level_for("frontend", log::LevelFilter::Debug)
+                .targets([
+                    Target::new(TargetKind::Stdout),
+                    Target::new(TargetKind::LogDir {
+                        file_name: Some("nk-launcher".into()),
+                    }),
+                    Target::new(TargetKind::Webview),
+                ])
+                .rotation_strategy(RotationStrategy::KeepSome(5))
+                .max_file_size(2 * 1024 * 1024) // 2 MB per file
+                .format(|out, message, record| {
+                    out.finish(format_args!(
+                        "[{} {} {}:{}] {}",
+                        chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f"),
+                        record.level(),
+                        record.target(),
+                        record.line().unwrap_or(0),
+                        message
+                    ))
+                })
                 .build(),
         )
         // Setup application / 设置应用
@@ -1063,6 +1232,28 @@ pub fn run() {
             // Initialize logging / 初始化日志
             if let Err(e) = setup_logging(app.handle()) {
                 error!("Failed to setup logging: {}", e);
+            }
+
+            // Startup diagnostics — captured *after* the logger plugin is wired
+            // so they land in the file too. This is the first thing we want to
+            // see when triaging issues on a user's machine.
+            // 启动诊断信息——logger 已就绪，确保这些信息能写入日志文件。
+            info!("================ nk-launcher startup ================");
+            info!(
+                "version={} tauri={} os={} arch={}",
+                env!("CARGO_PKG_VERSION"),
+                tauri::VERSION,
+                std::env::consts::OS,
+                std::env::consts::ARCH
+            );
+            match tauri::webview_version() {
+                Ok(v) => info!("webview2 runtime: {}", v),
+                Err(e) => warn!("webview2 runtime probe failed: {}", e),
+            }
+            info!("data_dir = {}", data_dir.display());
+            match get_log_dir(app.handle()) {
+                Ok(d) => info!("log_dir  = {}", d.display()),
+                Err(e) => warn!("log_dir resolution failed: {}", e),
             }
 
             // Initialize database and config manager (single shared connection)
@@ -1082,6 +1273,7 @@ pub fn run() {
 
             // Setup system tray / 设置系统托盘
             setup_tray(app.handle())?;
+            info!("system tray initialised");
 
             // Setup global shortcut / 设置全局快捷键
             let state = app.state::<AppState>();
@@ -1090,7 +1282,7 @@ pub fn run() {
             // Window is hidden until frontend init completes (visible:false in tauri.conf).
             // Frontend issues `show_window` after deciding state + persisted size,
             // which will reposition via `update_window_position`.
-            info!("nk-launcher started successfully");
+            info!("nk-launcher setup completed; awaiting frontend init");
             Ok(())
         })
         // Register all Tauri commands / 注册所有 Tauri 命令
@@ -1123,6 +1315,11 @@ pub fn run() {
             unmark_launched,
             show_settings,
             update_tray_menu,
+            frontend_log,
+            manual_start_dragging,
+            get_log_dir_path,
+            open_log_dir,
+            get_runtime_info,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
