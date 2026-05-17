@@ -33,6 +33,27 @@
   --bg-blur: 20px;
   --bg-opacity: 0.6;
   --search-opacity: 1;
+
+  /**
+   * Z-index scale / Z-index 层级体系
+   * Single source of truth for stacking order — never use raw numbers.
+   * 单一层级真值，禁止使用裸数字。
+   *
+   *   backdrop : ::before blur/overlay pseudo-elements (sit below content)
+   *   content  : in-flow content inside an overlay (sidebar, main-content)
+   *   chrome   : titlebar / sticky window chrome inside an overlay
+   *   overlay  : whole-page overlays (config-window, welcome-window)
+   *   dropdown : transient floating panels (settings search dropdown)
+   *   toast    : ephemeral notifications
+   *   menu     : right-click context menu (must beat everything else)
+   */
+  --z-backdrop: 0;
+  --z-content: 1;
+  --z-chrome: 10;
+  --z-overlay: 100;
+  --z-dropdown: 200;
+  --z-toast: 300;
+  --z-menu: 400;
 }
 
 /**
@@ -86,6 +107,7 @@ fluent-option {
  * Uses backdrop-filter for Windows 10/11 acrylic compatibility
  */
 #container {
+  position: relative; /* Anchor for the [data-simple-bg] ::before backdrop */
   background: rgba(var(--bg-primary-rgb), var(--bg-opacity));
   border: 1px solid var(--border-color);
   border-radius: 8px;
@@ -118,14 +140,14 @@ fluent-option {
   background: rgba(var(--bg-primary-rgb), var(--bg-opacity));
   backdrop-filter: blur(var(--bg-blur));
   -webkit-backdrop-filter: blur(var(--bg-blur));
-  z-index: 0;
+  z-index: var(--z-backdrop);
   border-radius: 8px;
 }
 
 [data-simple-bg="true"] #search-wrapper,
 [data-simple-bg="true"] #result-list {
   position: relative;
-  z-index: 1;
+  z-index: var(--z-content);
 }
 
 /* ============================================================================
@@ -341,6 +363,7 @@ fluent-option {
   left: 0;
   right: 0;
   bottom: 0;
+  z-index: var(--z-overlay);
   background: var(--bg-primary);
   display: none;
   flex-direction: column;
@@ -361,7 +384,7 @@ fluent-option {
   right: 0;
   bottom: 0;
   backdrop-filter: blur(var(--bg-blur));
-  z-index: 0;
+  z-index: var(--z-backdrop);
 }
 
 #config-window.visible {
@@ -370,6 +393,7 @@ fluent-option {
 
 /* Settings titlebar / 设置标题栏 */
 .config-titlebar {
+  position: relative; /* needed for z-index to take effect */
   height: 48px;
   background: rgba(var(--bg-primary-rgb), var(--bg-opacity));
   display: flex;
@@ -379,7 +403,7 @@ fluent-option {
   border-bottom: 1px solid var(--border-color);
   -webkit-app-region: drag;
   user-select: none;
-  z-index: 10;
+  z-index: var(--z-chrome);
 }
 
 .titlebar-left {
@@ -437,7 +461,7 @@ fluent-option {
   border-radius: 6px;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
   display: none;
-  z-index: 100;
+  z-index: var(--z-dropdown);
   -webkit-app-region: no-drag;
 }
 .settings-search-dropdown.visible { display: block; }
@@ -494,6 +518,7 @@ fluent-option {
 
 /* Sidebar navigation / 侧边栏导航 */
 .sidebar {
+  position: relative; /* needed for z-index to take effect */
   width: 180px;
   background: rgba(var(--bg-secondary-rgb), var(--bg-opacity));
   border-right: 1px solid var(--border-color);
@@ -501,7 +526,7 @@ fluent-option {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  z-index: 1;
+  z-index: var(--z-content);
 }
 
 .sidebar-item {
@@ -537,7 +562,7 @@ fluent-option {
   flex: 1;
   position: relative;
   background: rgba(var(--bg-primary-rgb), calc(var(--bg-opacity) - 0.3));
-  z-index: 1;
+  z-index: var(--z-content);
 }
 
 /* Content panel (hidden by default) / 内容面板（默认隐藏）*/
@@ -671,7 +696,7 @@ fluent-option {
   opacity: 0;
   transition: opacity 0.3s;
   pointer-events: none;
-  z-index: 1000;
+  z-index: var(--z-toast);
 }
 
 #toast.visible {
@@ -859,7 +884,7 @@ fluent-option {
   flex-direction: column;
   border-radius: 8px;
   overflow: hidden;
-  z-index: 100;
+  z-index: var(--z-overlay);
   backdrop-filter: blur(var(--bg-blur));
 }
 
@@ -965,7 +990,7 @@ fluent-option {
 
 .context-menu {
   position: fixed;
-  z-index: 2000;
+  z-index: var(--z-menu);
   min-width: 150px;
   max-width: 260px;
   background: rgba(30, 30, 30, 0.96);
@@ -1017,6 +1042,8 @@ fluent-option {
      doesn't briefly leave both elements and collapse the :hover chain. */
   left: calc(100% - 2px);
   top: -4px;
+  /* +1 above the parent menu so the submenu sits above any later siblings. */
+  z-index: calc(var(--z-menu) + 1);
   display: none;
   min-width: 140px;
   background: rgba(30, 30, 30, 0.96);
